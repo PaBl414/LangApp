@@ -12,14 +12,29 @@
   </header>
 
   <main class="dashboard">
-    <h1>Witaj, <span id="user-login">…</span>!</h1>
-    <section class="cards">
-      <article class="tile"><h3>Angielski</h3><p> </p><p class="xp">0 XP</p></article>
-      <article class="tile"><h3>Hiszpański</h3><p> </p></article>
-      <article class="tile"><h3>Niemiecki</h3><p> </p></article>
+    <div class="dash-header">
+      <h1>Witaj, <span id="user-login">…</span>!</h1>
+      <button id="btn-add-language" class="primary">+ Dodaj język</button>
+    </div>
+
+    <h2 class="section-title">Moje języki</h2>
+    <section id="my-languages" class="cards">
+      <p class="empty">Nie masz jeszcze żadnego języka. Kliknij „+ Dodaj język".</p>
     </section>
   </main>
 
-  <script src="/js/dashboard.js"></script>
+  <!-- Modal: wybór języka -->
+  <div id="modal-lang" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h2>Wybierz język</h2>
+        <button id="modal-close" class="ghost">×</button>
+      </div>
+      <input type="text" id="lang-search" placeholder="Szukaj języka..." class="modal-search" />
+      <ul id="lang-list" class="lang-list"></ul>
+    </div>
+  </div>
+
+  <script type="module" src="/js/dashboard.js"></script>
 </body>
 </html>

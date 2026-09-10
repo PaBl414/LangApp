@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .database import init_db
-from .routers import auth, learning
+from .routers import auth, learning, languages, dictionary, study
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = BASE_DIR / "frontend"
@@ -26,6 +26,9 @@ app = FastAPI(title="LangApp LAN", version="1.0.0", lifespan=lifespan)
 
 app.include_router(auth.router)
 app.include_router(learning.router)
+app.include_router(languages.router)
+app.include_router(dictionary.router)
+app.include_router(study.router)
 
 app.mount("/css", StaticFiles(directory=FRONTEND_DIR / "css"), name="css")
 app.mount("/js", StaticFiles(directory=FRONTEND_DIR / "js"), name="js")
@@ -39,6 +42,16 @@ async def root():
 @app.get("/dashboard")
 async def dashboard():
     return FileResponse(FRONTEND_DIR / "dashboard.html")
+
+
+@app.get("/language")
+async def language_page():
+    return FileResponse(FRONTEND_DIR / "language.html")
+
+
+@app.get("/study")
+async def study_page():
+    return FileResponse(FRONTEND_DIR / "study.html")
 
 
 @app.get("/favicon.ico", include_in_schema=False)

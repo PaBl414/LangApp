@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LangApp — Język</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌐</text></svg>" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a href="/dashboard" class="brand small" style="text-decoration:none;">← LangApp</a>
+    <button id="logout" class="ghost" type="button">Wyloguj</button>
+  </header>
+
+  <main class="dashboard">
+    <div class="dash-header">
+      <h1>
+        <span id="lang-flag">…</span>
+        <span id="lang-name">…</span>
+      </h1>
+      <div class="dash-actions">
+        <button id="btn-study" class="ghost" type="button">▶ Ucz się</button>
+        <button id="btn-add-word" class="primary" type="button">+ Dodaj słowo</button>
+      </div>
+    </div>
+    <p class="muted" id="lang-native"></p>
+
+    <h2 class="section-title">
+      Moje słowa (<span id="word-count">0</span>)
+    </h2>
+
+    <section id="word-list" class="word-list">
+      <p class="empty">Brak słów. Kliknij „+ Dodaj słowo".</p>
+    </section>
+  </main>
+
+  <!-- Modal: dodawanie słowa -->
+  <div id="modal-word" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h2>Dodaj słowo</h2>
+        <button id="modal-word-close" class="ghost" type="button" aria-label="Zamknij">×</button>
+      </div>
+
+      <div class="modal-body">
+        <label class="field">
+          Słowo w języku obcym
+          <input type="text" id="w-foreign" placeholder="np. hello"
+                 autocomplete="off" autocapitalize="off" spellcheck="false" />
+        </label>
+
+        <div id="w-suggest" class="suggestions hidden"></div>
+
+        <label class="field">
+          Tłumaczenie polskie
+          <input type="text" id="w-polish" placeholder="np. cześć"
+                 autocomplete="off" autocapitalize="off" spellcheck="false" />
+        </label>
+
+        <p id="w-msg" class="msg"></p>
+
+        <div class="modal-actions">
+          <button id="w-save" class="primary" type="button">Zapisz</button>
+          <button id="w-cancel" class="ghost" type="button">Anuluj</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/js/language.js"></script>
+</body>
+</html>

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <title>LangApp — Nauka</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a href="/dashboard" class="brand small" style="text-decoration:none;">← LangApp</a>
+    <button id="logout" class="ghost">Wyloguj</button>
+  </header>
+
+  <main class="dashboard study-wrapper">
+
+    <!-- EKRAN 1: KONFIGURACJA -->
+    <section id="screen-config" class="study-screen">
+      <h1>Rozpocznij naukę</h1>
+      <p class="muted" id="cfg-lang">Język: …</p>
+
+      <div class="form-row">
+        <label>Tryb
+          <select id="cfg-mode">
+            <option value="lang_to_pl">Z języka obcego → polski</option>
+            <option value="pl_to_lang">Z polskiego → język obcy</option>
+            <option value="mix">Mix (losowo)</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="form-row">
+        <label>Liczba słów
+          <input type="number" id="cfg-count" min="1" max="50" value="10" />
+        </label>
+      </div>
+
+      <button id="btn-start" class="primary big">Rozpocznij</button>
+      <p id="cfg-msg" class="msg"></p>
+    </section>
+
+    <!-- EKRAN 2: QUIZ -->
+    <section id="screen-quiz" class="study-screen hidden">
+      <div class="quiz-head">
+        <span id="quiz-progress">Pytanie 1 / 10</span>
+        <span id="quiz-mode" class="muted"></span>
+      </div>
+      <div class="progress-bar"><div id="progress-fill"></div></div>
+
+      <div class="quiz-prompt">
+        <p class="muted" id="quiz-direction"></p>
+        <h2 id="quiz-word">…</h2>
+      </div>
+
+      <input type="text" id="quiz-answer" placeholder="Wpisz tłumaczenie…"
+             autocomplete="off" autocapitalize="off" spellcheck="false" />
+      <div class="quiz-actions">
+        <button id="btn-next" class="primary big">Zatwierdź</button>
+      </div>
+      <p id="quiz-feedback" class="msg"></p>
+    </section>
+
+    <!-- EKRAN 3: WYNIK -->
+    <section id="screen-result" class="study-screen hidden">
+      <h1 id="res-title">Wynik</h1>
+      <p class="res-score"><span id="res-correct">0</span> / <span id="res-total">0</span>
+         (<span id="res-percent">0</span>%)</p>
+
+      <h2 class="section-title">Szczegóły</h2>
+      <div id="res-list" class="res-list"></div>
+
+      <div class="res-actions">
+        <a href="/dashboard" class="ghost" style="text-decoration:none; padding:10px 18px;">Panel</a>
+        <button id="btn-again" class="primary">Jeszcze raz</button>
+      </div>
+    </section>
+
+  </main>
+
+  <script type="module" src="/js/study.js"></script>
+</body>
+</html>
