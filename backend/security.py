@@ -1,23 +1,26 @@
 """
-Hashowanie haseł (bcrypt z losową solą) oraz tokeny sesji.
+Hashowanie haseł (Argon2, weryfikacja dawnych hashy bcrypt) oraz tokeny sesji.
 """
 import secrets
-from passlib.context import CryptContext
+from pwdlib import PasswordHash
+from pwdlib.hashers.argon2 import Argon2Hasher
+from pwdlib.hashers.bcrypt import BcryptHasher
 
-pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto",
-    bcrypt__rounds=12,
-)
+password_hash = PasswordHash((Argon2Hasher(), BcryptHasher()))
 
 
 def hash_password(plain: str) -> str:
-    # bcrypt automatycznie generuje losową sól dla każdego hasła
-    return pwd_context.hash(plain)
+    return password_hash.hash(plain)
 
 
-def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+def verify_password(plain: str, hashed: str) -> tuple[bool, str | None]:
+    if hashed.startswith(("$2a$", "$2b$", "$2y$")):
+        # Passlib's former bcrypt configuration truncated inputs at 72 bytes.
+        legacy_password = plain.encode("utf-8")[:72]
+        valid = password_hash.verify(legacy_password, hashed)
+        return valid, hash_password(plain) if valid else None
+
+    return password_hash.verify_and_update(plain, hashed)
 
 
 def new_session_token() -> str:

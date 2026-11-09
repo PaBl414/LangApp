@@ -88,8 +88,11 @@ async def login(
     if not user:
         raise HTTPException(401, "Nieprawidłowy login lub hasło.")
 
-    if not verify_password(payload.password, user.password_hash):
+    password_valid, upgraded_hash = verify_password(payload.password, user.password_hash)
+    if not password_valid:
         raise HTTPException(401, "Nieprawidłowy login lub hasło.")
+    if upgraded_hash:
+        user.password_hash = upgraded_hash
 
     user.fingerprint = payload.fingerprint
     user.cookie_id = payload.cookie_id
