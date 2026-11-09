@@ -75,6 +75,13 @@ class StudyStartRequest(APIRequest):
     mode: Literal["lang_to_pl", "pl_to_lang", "mix"]
     count: int = Field(default=10, strict=True, ge=1, le=50)
     request_id: UUID | None = None
+    source: Literal["all", "due"] = "all"
+
+    @model_validator(mode="after")
+    def review_direction(self):
+        if self.source == "due" and self.mode == "mix":
+            raise ValueError("Wybierz jeden kierunek zaplanowanej powtórki.")
+        return self
 
 
 class StudyAnswerRequest(APIRequest):

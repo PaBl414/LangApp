@@ -8,7 +8,8 @@ function d(msg, data) {
 }
 
 export async function getFingerprint() {
-  const cached = sessionStorage.getItem("langapp_fp");
+  let cached;
+  try { cached = sessionStorage.getItem("langapp_fp"); } catch { /* Optional browser storage. */ }
   if (cached) return cached;
 
   let fp = "unknown";
@@ -28,15 +29,18 @@ export async function getFingerprint() {
   }
 
   fp = String(fp).slice(0, 128);
-  sessionStorage.setItem("langapp_fp", fp);
+  try { sessionStorage.setItem("langapp_fp", fp); } catch { /* Login must still work. */ }
   return fp;
 }
 
+let memoryCookieId = null;
 export function getCookieId() {
-  const stored = localStorage.getItem("langapp_cid");
+  let stored = memoryCookieId;
+  try { stored = localStorage.getItem("langapp_cid") || stored; } catch { /* Fall back to memory. */ }
   if (stored) return stored;
   const id = (crypto.randomUUID && crypto.randomUUID()) ||
              (Date.now().toString(36) + Math.random().toString(36).slice(2));
-  localStorage.setItem("langapp_cid", id);
+  memoryCookieId = id;
+  try { localStorage.setItem("langapp_cid", id); } catch { /* Identifier is not authentication. */ }
   return id;
 }

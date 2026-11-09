@@ -39,4 +39,8 @@ async def init_db(db_engine: AsyncEngine | None = None) -> None:
         command.upgrade(config, "head")
 
     async with (db_engine if db_engine is not None else engine).begin() as conn:
+        if conn.dialect.name == "sqlite":
+            # sqlite3 legacy mode does not begin transactions for DDL. Make
+            # schema changes and their backfill roll back together on failure.
+            await conn.exec_driver_sql("BEGIN IMMEDIATE")
         await conn.run_sync(upgrade)

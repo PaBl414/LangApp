@@ -2,6 +2,7 @@
 <html lang="pl">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LangApp — Panel</title>
   <link rel="stylesheet" href="/css/style.css" />
 </head>
@@ -14,8 +15,38 @@
   <main class="dashboard">
     <div class="dash-header">
       <h1>Witaj, <span id="user-login">…</span>!</h1>
-      <button id="btn-add-language" class="primary">+ Dodaj język</button>
+      <div class="dash-actions">
+        <button id="btn-refresh" class="ghost" type="button">Odśwież</button>
+        <button id="btn-add-language" class="primary" type="button">+ Dodaj język</button>
+      </div>
     </div>
+    <p id="dashboard-status" class="msg" role="status" aria-live="polite">Wczytywanie postępu…</p>
+    <a id="dashboard-login" href="/" hidden>Zaloguj się ponownie</a>
+
+    <section class="stats-grid" aria-label="Twój postęp">
+      <article class="stat-card"><h2>Przećwiczone słowa</h2><p id="stat-words">—</p><small>z aktualnego słownika</small></article>
+      <article class="stat-card"><h2>Ukończone quizy</h2><p id="stat-quizzes">—</p></article>
+      <article class="stat-card"><h2>Poprawne odpowiedzi</h2><p id="stat-accuracy">—</p><small id="stat-answers"></small></article>
+      <article class="stat-card"><h2>Seria dni</h2><p id="stat-streak">—</p><small>dni z ukończonym quizem</small></article>
+    </section>
+
+    <section class="dashboard-section" aria-labelledby="due-heading">
+      <h2 id="due-heading">Do powtórzenia dzisiaj <span id="due-count"></span></h2>
+      <p id="learning-day" class="muted"></p>
+      <div id="due-list" class="learning-list"><p>Wczytywanie powtórek…</p></div>
+    </section>
+
+    <section class="dashboard-section" aria-labelledby="difficult-heading">
+      <h2 id="difficult-heading">Słowa sprawiające trudność</h2>
+      <div id="difficult-list" class="learning-list"><p>Wczytywanie…</p></div>
+    </section>
+
+    <section class="dashboard-section" aria-labelledby="history-heading">
+      <h2 id="history-heading">Poprzednie wyniki</h2>
+      <div id="history-list" class="learning-list"><p>Wczytywanie historii…</p></div>
+      <p id="history-status" class="msg" role="status" aria-live="polite"></p>
+      <button id="btn-history-more" class="ghost" type="button" hidden>Pokaż starsze wyniki</button>
+    </section>
 
     <h2 class="section-title">Moje języki</h2>
     <section id="my-languages" class="cards">
@@ -24,14 +55,16 @@
   </main>
 
   <!-- Modal: wybór języka -->
-  <div id="modal-lang" class="modal hidden">
+  <div id="modal-lang" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="language-modal-title">
     <div class="modal-box">
       <div class="modal-head">
-        <h2>Wybierz język</h2>
-        <button id="modal-close" class="ghost">×</button>
+        <h2 id="language-modal-title">Wybierz język</h2>
+        <button id="modal-close" class="ghost" type="button" aria-label="Zamknij">×</button>
       </div>
       <input type="text" id="lang-search" placeholder="Szukaj języka..." class="modal-search" />
       <ul id="lang-list" class="lang-list"></ul>
+      <p id="modal-lang-msg" class="msg" role="status" aria-live="polite"></p>
+      <button id="btn-retry-languages" class="ghost" type="button" hidden>Ponów wczytywanie</button>
     </div>
   </div>
 

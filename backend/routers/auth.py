@@ -2,7 +2,6 @@
 Endpointy rejestracji, logowania i wylogowania.
 """
 import os
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import delete, select
@@ -16,6 +15,7 @@ from ..schemas import RegisterRequest, LoginRequest
 from ..security import hash_password, verify_password, new_session_token
 from ..antifraud import is_duplicate
 from ..sessions import COOKIE_NAME, SESSION_MAX_AGE, session_cutoff
+from ..time_utils import utc_now
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -114,7 +114,7 @@ async def login(
     user.fingerprint = payload.fingerprint
     user.cookie_id = payload.cookie_id
     user.ip_address = client_ip(request)
-    user.last_login = datetime.utcnow()
+    user.last_login = utc_now()
 
     token = await create_session(db, user.id, request)
     await db.commit()

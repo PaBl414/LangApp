@@ -19,6 +19,7 @@ from backend.database import Base, get_db, init_db
 from backend.main import app
 from backend.models import Language, Progress, Session, StudyAnswer, StudySession, User, UserLanguage, UserWord
 from backend.sessions import COOKIE_NAME, SESSION_MAX_AGE
+from backend.time_utils import utc_now
 
 
 class APITestCase(unittest.IsolatedAsyncioTestCase):
@@ -103,7 +104,7 @@ class AccountDataTests(APITestCase):
         token = self.client.cookies.get(COOKIE_NAME)
         async with self.sessions() as db:
             session = await db.get(Session, token)
-            session.created_at = datetime.utcnow() - timedelta(seconds=SESSION_MAX_AGE + 1)
+            session.created_at = utc_now() - timedelta(seconds=SESSION_MAX_AGE + 1)
             await db.commit()
         self.assertEqual((await self.client.get("/api/me")).status_code, 401)
         async with self.sessions() as db:

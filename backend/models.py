@@ -2,10 +2,11 @@
 Modele ORM. Tabela users przechowuje login, hash hasła,
 informacje o cookies, fingerprint oraz lokalny adres IP.
 """
-from datetime import datetime
-from sqlalchemy import String, Integer, DateTime, JSON, Index, UniqueConstraint
+from datetime import date, datetime
+from sqlalchemy import String, Integer, Date, DateTime, JSON, Index, UniqueConstraint, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
+from .time_utils import utc_now
 
 
 class User(Base):
@@ -20,19 +21,19 @@ class User(Base):
     fingerprint: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     ip_address: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    last_login: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    last_login: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 class Session(Base):
     __tablename__ = "sessions"
 
     token: Mapped[str] = mapped_column(String(128), primary_key=True)
     user_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
 class Progress(Base):
-    """Prosty postęp nauki — miejsce na rozbudowę."""
+    """Legacy prototype counters, preserved; current statistics are derived from quizzes."""
     __tablename__ = "progress"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -59,7 +60,7 @@ class UserLanguage(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
     language_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     __table_args__ = (
         UniqueConstraint("user_id", "language_id", name="uq_user_language"),
@@ -67,7 +68,7 @@ class UserLanguage(Base):
 
 
 class UserWord(Base):
-    """Słowa użytkownika w danym języku. (Etap 2 — teraz tylko szkielet.)"""
+    """Owned vocabulary and explicit accepted answers in both translation directions."""
     __tablename__ = "user_words"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -78,7 +79,7 @@ class UserWord(Base):
     translation_alternatives: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]", nullable=False)
     word_alternatives: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]", nullable=False)
     is_valid: Mapped[bool] = mapped_column(default=True)                    # czy przeszło walidację API
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 class StudySession(Base):
     """Sesja nauki — jedno podejście użytkownika do quizu."""
     __tablename__ = "study_sessions"
@@ -90,12 +91,13 @@ class StudySession(Base):
     total: Mapped[int] = mapped_column(Integer, nullable=False)
     correct: Mapped[int] = mapped_column(Integer, default=0)
     finished: Mapped[bool] = mapped_column(default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     finished_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     current_index: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     start_request_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     requested_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source: Mapped[str] = mapped_column(String(8), default="all", server_default="all", nullable=False)
 
     __table_args__ = (
         Index("uq_study_start_request", "user_id", "start_request_id", unique=True),
@@ -115,4 +117,28 @@ class StudyAnswer(Base):
     given: Mapped[str] = mapped_column(String(128), nullable=False)        # co wpisał/kliknął użytkownik
     is_correct: Mapped[bool] = mapped_column(default=False)
     direction: Mapped[str] = mapped_column(String(16), nullable=False)     # "lang_to_pl" | "pl_to_lang"
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+
+class WordReview(Base):
+    """Current learning state for an owned word and one translation direction."""
+    __tablename__ = "word_reviews"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    word_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    language_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    correct_answers: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    consecutive_correct: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    due_on: Mapped[date] = mapped_column(Date, nullable=False)
+    last_correct: Mapped[bool] = mapped_column(nullable=False)
+    last_reviewed_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "word_id", "direction", name="uq_word_review_direction"),
+        CheckConstraint("attempts >= 0 AND correct_answers >= 0 AND correct_answers <= attempts", name="ck_word_review_counts"),
+        CheckConstraint("consecutive_correct >= 0", name="ck_word_review_streak"),
+        Index("ix_word_reviews_due", "user_id", "due_on", "language_id", "direction"),
+    )

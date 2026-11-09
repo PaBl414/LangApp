@@ -7,9 +7,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..models import Language, UserLanguage, User, UserWord, StudySession, StudyAnswer, Progress
+from ..models import Language, UserLanguage, User, UserWord, StudySession, StudyAnswer, Progress, WordReview
 from ..schemas import AddLanguageRequest, AddWordRequest
 from ..grading import accepted_variants, clean_text
+from ..reviews import word_signature
 from .learning import current_user
 
 router = APIRouter(prefix="/api", tags=["languages"])
@@ -101,6 +102,9 @@ async def remove_language(
         StudySession.language_id == ul.language_id,
     )
     # Delete snapshots before their parent sessions, in the same transaction.
+    await db.execute(delete(WordReview).where(
+        WordReview.user_id == user.id, WordReview.language_id == ul.language_id,
+    ))
     await db.execute(delete(StudyAnswer).where(StudyAnswer.session_id.in_(study_ids)))
     await db.execute(delete(StudySession).where(
         StudySession.user_id == user.id, StudySession.language_id == ul.language_id,
@@ -246,11 +250,16 @@ async def update_word(
     ).limit(1))).scalar_one_or_none()
     if duplicate:
         raise HTTPException(409, "To słowo już istnieje w tym języku.")
+    previous_signature = word_signature(word)
     word.word = primary
     word.translation_pl = clean_text(payload.translation_pl)
     word.translation_alternatives = accepted_variants(word.translation_pl, payload.translation_alternatives)[1:]
     word.word_alternatives = accepted_variants(word.word, payload.word_alternatives)[1:]
     word.is_valid = payload.is_valid
+    if word_signature(word) != previous_signature:
+        await db.execute(delete(WordReview).where(
+            WordReview.user_id == user.id, WordReview.word_id == word.id,
+        ))
     await db.commit()
     return {"ok": True, "word": word_response(word)}
 
@@ -269,6 +278,9 @@ async def delete_word(
     )).scalar_one_or_none()
     if not w:
         raise HTTPException(404, "Nie znaleziono słowa.")
+    await db.execute(delete(WordReview).where(
+        WordReview.user_id == user.id, WordReview.word_id == w.id,
+    ))
     await db.delete(w)
     await db.commit()
     return {"ok": True}

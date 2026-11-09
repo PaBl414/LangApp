@@ -1,6 +1,5 @@
 """Owned, resumable quizzes with versioned drafts and immutable final results."""
 import random
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, update
@@ -9,7 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..grading import accepted_variants, is_correct, normalize_answer
-from ..models import Language, StudyAnswer, StudySession, User, UserLanguage, UserWord
+from ..models import Language, StudyAnswer, StudySession, User, UserLanguage, UserWord, WordReview
+from ..reviews import record_reviews
+from ..time_utils import learning_date, utc_now
 from ..schemas import StudyDraftRequest, StudyStartRequest, StudySubmitRequest
 from .learning import current_user
 
@@ -48,7 +49,7 @@ def result_response(session: StudySession, answers: list[StudyAnswer]) -> dict:
 
 def session_response(session: StudySession, answers: list[StudyAnswer]) -> dict:
     response = {
-        "session_id": session.id, "language_id": session.language_id,
+        "session_id": session.id, "language_id": session.language_id, "source": session.source,
         "mode": session.mode, "total": session.total, "revision": session.revision,
         "current_index": session.current_index, "finished": session.finished,
         "questions": [{"word_id": answer.word_id, "direction": answer.direction, "prompt": answer.prompt} for answer in answers],
@@ -83,7 +84,7 @@ async def start_study(
             StudySession.user_id == user_id, StudySession.start_request_id == request_id,
         ))).scalar_one_or_none()
         if session:
-            if (session.language_id, session.mode, session.requested_count) != (payload.language_id, payload.mode, payload.count):
+            if (session.language_id, session.mode, session.requested_count, session.source) != (payload.language_id, payload.mode, payload.count, payload.source):
                 raise HTTPException(409, "Identyfikator rozpoczęcia został już użyty dla innych ustawień.")
             return session_response(session, await session_answers(db, session.id))
         return None
@@ -96,15 +97,23 @@ async def start_study(
     ))).scalar_one_or_none()
     if membership is None:
         raise HTTPException(404, "Ten język nie jest dodany do Twojego profilu.")
-    words = list((await db.execute(select(UserWord).where(
+    query = select(UserWord).where(
         UserWord.user_id == user_id, UserWord.language_id == payload.language_id,
-    ))).scalars().all())
-    if len(words) < MIN_WORDS:
+    )
+    if payload.source == "due":
+        query = query.join(WordReview, WordReview.word_id == UserWord.id).where(
+            WordReview.user_id == user_id, WordReview.direction == payload.mode,
+            WordReview.due_on <= learning_date(utc_now()),
+        ).order_by(WordReview.due_on, WordReview.last_correct, WordReview.last_reviewed_at, UserWord.id).limit(payload.count)
+    words = list((await db.execute(query)).scalars().all())
+    if payload.source == "due" and not words:
+        raise HTTPException(400, "Brak zaplanowanych powtórek w tym kierunku na dziś.")
+    if payload.source == "all" and len(words) < MIN_WORDS:
         raise HTTPException(400, f"Potrzebujesz co najmniej {MIN_WORDS} słów, żeby rozpocząć naukę.")
-    chosen = random.sample(words, min(payload.count, len(words)))
+    chosen = words if payload.source == "due" else random.sample(words, min(payload.count, len(words)))
     session = StudySession(
         user_id=user_id, language_id=payload.language_id, mode=payload.mode,
-        total=len(chosen), requested_count=payload.count, start_request_id=request_id,
+        total=len(chosen), requested_count=payload.count, start_request_id=request_id, source=payload.source,
     )
     db.add(session)
     try:
@@ -144,7 +153,7 @@ async def active_studies(
         StudySession.finished.is_(False),
     ).order_by(StudySession.id.desc()).limit(20))).scalars().all()
     return {"sessions": [{
-        "session_id": session.id, "mode": session.mode, "total": session.total,
+        "session_id": session.id, "mode": session.mode, "total": session.total, "source": session.source,
         "current_index": session.current_index, "created_at": session.created_at.isoformat(),
     } for session in sessions]}
 
@@ -220,12 +229,13 @@ async def submit_study(
     revision = session.revision
     graded = [(answer, given.get(answer.word_id, answer.given)) for answer in answers]
     correct = sum(is_correct(value, answer.expected, answer.accepted_answers) for answer, value in graded)
+    completed_at = utc_now()
     claim = await db.execute(update(StudySession).where(
         StudySession.id == session_id, StudySession.user_id == user_id,
         StudySession.finished.is_(False), StudySession.revision == revision,
     ).values(
         revision=revision + 1, correct=correct, finished=True, current_index=session.total,
-        finished_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        finished_at=completed_at,
     ).execution_options(synchronize_session=False))
     if claim.rowcount != 1:
         await db.rollback()
@@ -236,6 +246,7 @@ async def submit_study(
     for answer, value in graded:
         answer.given = value
         answer.is_correct = is_correct(value, answer.expected, answer.accepted_answers)
+    await record_reviews(db, session, answers, completed_at)
     await db.commit()
     await db.refresh(session)
     return result_response(session, answers)

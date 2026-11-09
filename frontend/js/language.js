@@ -1,4 +1,4 @@
-import { formatError } from "./api-errors.js";
+import { request } from "./api-client.js";
 
 /**
  * language.js — widok pojedynczego języka.
@@ -19,22 +19,13 @@ let savingWord = false;
 
 // === 2. Wylogowanie ===
 document.getElementById("logout").addEventListener("click", async () => {
-  try { await fetch("/api/auth/logout", { method: "POST" }); } catch (e) {}
-  window.location.href = "/";
+  try { await request("/api/auth/logout", "POST"); window.location.href = "/"; }
+  catch (error) { alert(error.message); }
 });
 
 // === 3. Ładowanie języka i słów ===
 async function loadAll() {
-  const res = await fetch(`/api/user/languages/${LANGUAGE_ID}/words`, {
-    credentials: "same-origin",
-  });
-  if (!res.ok) {
-    if (res.status === 401) { window.location.href = "/"; return; }
-    alert("Nie udało się załadować danych języka.");
-    window.location.href = "/dashboard";
-    return;
-  }
-  const data = await res.json();
+  const data = await request(`/api/user/languages/${LANGUAGE_ID}/words`);
   LANG = data.language;
 
   document.getElementById("lang-flag").textContent = LANG.flag;
@@ -82,14 +73,10 @@ function renderWords(words) {
     btn.addEventListener("click", async () => {
       if (!confirm("Usunąć to słowo?")) return;
       try {
-        const res = await fetch(`/api/words/${btn.dataset.id}`, { method: "DELETE" });
-        if (!res.ok) {
-          alert(formatError(await res.json().catch(() => ({}))));
-          return;
-        }
+        await request(`/api/words/${btn.dataset.id}`, "DELETE");
         await loadAll();
-      } catch {
-        alert("Błąd sieci. Nie udało się potwierdzić usunięcia słowa.");
+      } catch (error) {
+        alert(error.message);
       }
     });
   });
@@ -146,11 +133,9 @@ inputForeign.addEventListener("input", () => {
 
 async function checkWord(word) {
   try {
-    const res = await fetch(
+    const data = await request(
       `/api/dictionary/check?lang=${encodeURIComponent(LANG.code)}&word=${encodeURIComponent(word)}`
     );
-    if (!res.ok) return;
-    const data = await res.json();
     if (inputForeign.value.trim() !== word) return;
     if (!data.exists && data.suggestions?.length) {
       suggestionsEl.innerHTML = `<span class="muted">Czy chodziło Ci o:</span> ` +
@@ -196,30 +181,20 @@ document.getElementById("w-save").addEventListener("click", async () => {
   try {
     if (edited?.word !== word) {
       try {
-        const check = await fetch(`/api/dictionary/check?lang=${encodeURIComponent(LANG.code)}&word=${encodeURIComponent(word)}`);
-        if (!check.ok) throw new Error("Słownik niedostępny.");
-        payload.is_valid = !!(await check.json()).exists;
+        const check = await request(`/api/dictionary/check?lang=${encodeURIComponent(LANG.code)}&word=${encodeURIComponent(word)}`);
+        payload.is_valid = !!check.exists;
         if (!payload.is_valid && !confirm(`Słowo „${word}" nie zostało znalezione. Zapisać jako niezweryfikowane?`)) return;
       } catch {
         payload.is_valid = false;
         if (!confirm("Nie udało się zweryfikować słowa. Zapisać jako niezweryfikowane?")) return;
       }
     }
-    const res = await fetch(edited ? `/api/words/${edited.id}` : `/api/user/languages/${LANGUAGE_ID}/words`, {
-      method: edited ? "PUT" : "POST",
-      headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      msg.classList.add("error");
-      msg.textContent = formatError(data, `Błąd (HTTP ${res.status}).`);
-      return;
-    }
+    await request(edited ? `/api/words/${edited.id}` : `/api/user/languages/${LANGUAGE_ID}/words`, edited ? "PUT" : "POST", payload);
     closeModal();
     await loadAll();
-  } catch {
+  } catch (error) {
     msg.classList.add("error");
-    msg.textContent = "Brak odpowiedzi serwera. Wpisane dane zachowano w formularzu.";
+    msg.textContent = error.message + " Wpisane dane zachowano w formularzu.";
   } finally { savingWord = false; controls.forEach(control => { control.disabled = false; }); }
 });
 
@@ -234,4 +209,4 @@ if (btnStudy) {
 }
 
 // === 8. Start ===
-loadAll();
+loadAll().catch(error => { alert(error.message); if (error.status === 401) window.location.href = "/"; });

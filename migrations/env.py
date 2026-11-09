@@ -21,6 +21,8 @@ async def run_online():
     engine = create_async_engine(DATABASE_URL, poolclass=NullPool)
     try:
         async with engine.begin() as connection:
+            if connection.dialect.name == "sqlite":
+                await connection.exec_driver_sql("BEGIN IMMEDIATE")
             await connection.run_sync(migrate)
     finally:
         await engine.dispose()

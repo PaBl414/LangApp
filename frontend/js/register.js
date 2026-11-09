@@ -1,19 +1,5 @@
 import { getFingerprint, getCookieId } from "./fingerprint.js";
-
-// Ustawianie cookie identyfikatora od razu przy wejściu na stronę
-getCookieId();
-function formatError(data) {
-  if (!data) return "";
-  const x = data.detail;
-  if (typeof x === "string") return x;
-  if (Array.isArray(x)) {
-    return x.map(e => {
-      const f = Array.isArray(e.loc) ? e.loc.filter(v => v !== "body").join(".") : "";
-      return f ? `${f}: ${e.msg}` : e.msg;
-    }).join("\n");
-  }
-  return JSON.stringify(x);
-}
+import { request } from "./api-client.js";
 
 // Przełączanie zakładek
 document.querySelectorAll(".tab").forEach(btn => {
@@ -50,6 +36,9 @@ passwordInput.addEventListener("input", updateCriteria);
 // Wysyłka formularza rejestracji
 document.getElementById("register-form").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const form = e.currentTarget, button = form.querySelector('button[type="submit"]');
+  if (button.disabled) return;
+  button.disabled = true;
   const msg = document.getElementById("register-msg");
   msg.className = "msg";
   msg.textContent = "Przetwarzanie…";
@@ -59,39 +48,17 @@ document.getElementById("register-form").addEventListener("submit", async (e) =>
   const password = fd.get("password");
   const password_confirm = fd.get("password_confirm");
 
-  let fingerprint, cookie_id;
+  let completed = false;
   try {
-    fingerprint = await getFingerprint();
-    cookie_id = getCookieId();
-  } catch (err) {
-    msg.className = "msg error";
-    msg.textContent = "Błąd inicjalizacji: " + err.message;
-    return;
-  }
-
-  const payload = { login, password, password_confirm, fingerprint, cookie_id };
-
-  let res, data;
-  try {
-    res = await fetch("/api/auth/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+    await request("/api/auth/register", "POST", {
+      login, password, password_confirm, fingerprint: await getFingerprint(), cookie_id: getCookieId(),
     });
-    data = await res.json().catch(() => ({}));
-  } catch (err) {
+    completed = true;
+    msg.className = "msg ok";
+    msg.textContent = "Konto utworzone! Przekierowanie…";
+    setTimeout(() => (window.location.href = "/dashboard"), 800);
+  } catch (error) {
     msg.className = "msg error";
-    msg.textContent = "Błąd sieci: " + err.message;
-    return;
-  }
-
-  if (!res.ok) {
-    msg.className = "msg error";
-    msg.textContent = formatError(data) || `Błąd rejestracji (HTTP ${res.status}).`;
-    return;
-  }
-
-  msg.className = "msg ok";
-  msg.textContent = "Konto utworzone! Przekierowanie…";
-  setTimeout(() => (window.location.href = "/dashboard"), 800);
+    msg.textContent = error.message;
+  } finally { button.disabled = completed; }
 });

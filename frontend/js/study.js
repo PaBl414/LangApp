@@ -1,4 +1,4 @@
-import { formatError } from "./api-errors.js";
+import { APIError, request } from "./api-client.js";
 
 const params = new URLSearchParams(window.location.search);
 const LANGUAGE_ID = Number(params.get("id"));
@@ -8,27 +8,6 @@ let userId = null, session = null, answers = [], currentIdx = 0, baseRevision = 
 let dirty = false, syncPromise = null, saveTimer = null, pendingSave = null;
 let submitting = false, conflict = false, booting = false, starting = false, localSaved = false;
 let pendingStartMemory = null;
-
-class APIError extends Error {
-  constructor(message, status = 0) { super(message); this.status = status; }
-}
-
-async function request(url, method = "GET", body) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-  try {
-    const response = await fetch(url, {
-      method, credentials: "same-origin", signal: controller.signal,
-      ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new APIError(formatError(data, `Błąd HTTP ${response.status}.`), response.status);
-    return data;
-  } catch (error) {
-    if (error instanceof APIError) throw error;
-    throw new APIError("Brak odpowiedzi serwera. Sprawdź połączenie i ponów próbę.");
-  } finally { clearTimeout(timeout); }
-}
 
 function message(id, text, error = false) {
   $(id).textContent = text;
@@ -51,7 +30,8 @@ function pendingStart() {
   const pending = pendingStartMemory || readStorage(startKey());
   if (pending && Object.hasOwn(modeNames, pending.mode) && Number.isInteger(pending.count)
       && pending.count >= 1 && pending.count <= 50 && typeof pending.request_id === "string"
-      && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pending.request_id)) return pending;
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pending.request_id)
+      && ["all", "due"].includes(pending.source || "all")) return {...pending, source: pending.source || "all"};
   return null;
 }
 function persistDraft() {
@@ -82,7 +62,7 @@ function renderQuestion() {
   const question = session.questions[currentIdx];
   $("quiz-progress").textContent = `Pytanie ${currentIdx + 1} / ${session.total}`;
   $("progress-fill").style.width = `${currentIdx / session.total * 100}%`;
-  $("quiz-mode").textContent = modeNames[session.mode];
+  $("quiz-mode").textContent = modeNames[session.mode] + (session.source === "due" ? " · powtórka" : "");
   $("quiz-direction").textContent = question.direction === "lang_to_pl" ? "Przetłumacz na polski:" : "Przetłumacz na język obcy:";
   $("quiz-word").textContent = question.prompt;
   $("quiz-answer").value = answers[currentIdx].given;
@@ -219,16 +199,16 @@ function requestId() {
 }
 async function startQuiz() {
   if (starting || booting || !userId) return;
-  const mode = $("cfg-mode").value, count = Number($("cfg-count").value);
+  const mode = $("cfg-mode").value, count = Number($("cfg-count").value), source = $("cfg-source").value;
   if (!Number.isInteger(count) || count < 1 || count > 50) { message("cfg-msg", "Wpisz liczbę słów od 1 do 50.", true); return; }
   let pending = pendingStart();
-  if (!pending || pending.mode !== mode || pending.count !== count) pending = {mode, count, request_id: requestId()};
+  if (!pending || pending.mode !== mode || pending.count !== count || pending.source !== source) pending = {mode, count, source, request_id: requestId()};
   writeStorage(startKey(), pending);
   pendingStartMemory = pending;
   starting = true; $("btn-start").disabled = true;
   message("cfg-msg", "Rozpoczynanie…");
   try {
-    const data = await request("/api/study/start", "POST", {language_id: LANGUAGE_ID, mode: pending.mode, count: pending.count, request_id: pending.request_id});
+    const data = await request("/api/study/start", "POST", {language_id: LANGUAGE_ID, mode: pending.mode, count: pending.count, source: pending.source, request_id: pending.request_id});
     adoptSession(data); removeStorage(startKey()); pendingStartMemory = null;
   } catch (error) { report("cfg-msg", error); }
   finally { starting = false; $("btn-start").disabled = false; }
@@ -249,12 +229,15 @@ async function initialize() {
     $("resume-session").replaceChildren();
     for (const quiz of active.sessions) {
       const option = document.createElement("option"); option.value = quiz.session_id;
-      option.textContent = `${modeNames[quiz.mode]} · pytanie ${quiz.current_index + 1}/${quiz.total} · ${new Date(quiz.created_at + "Z").toLocaleString("pl-PL")}`;
+      option.textContent = `${quiz.source === "due" ? "Powtórka · " : ""}${modeNames[quiz.mode]} · pytanie ${quiz.current_index + 1}/${quiz.total} · ${new Date(quiz.created_at + "Z").toLocaleString("pl-PL")}`;
       $("resume-session").append(option);
     }
     $("resume-panel").hidden = active.sessions.length === 0;
     const pending = pendingStart();
-    if (pending) { $("cfg-mode").value = pending.mode; $("cfg-count").value = pending.count; message("cfg-msg", "Możesz ponowić poprzednią próbę rozpoczęcia quizu."); }
+    const review = new URLSearchParams(window.location.search).get("review");
+    if (["lang_to_pl", "pl_to_lang"].includes(review)) { $("cfg-source").value = "due"; $("cfg-mode").value = review; }
+    else if (pending) { $("cfg-mode").value = pending.mode; $("cfg-count").value = pending.count; $("cfg-source").value = pending.source; message("cfg-msg", "Możesz ponowić poprzednią próbę rozpoczęcia quizu."); }
+    updateSource();
     const id = Number(new URLSearchParams(window.location.search).get("session"));
     if (Number.isSafeInteger(id) && id > 0) await loadSession(id);
     $("btn-start").disabled = false;
@@ -262,6 +245,13 @@ async function initialize() {
   finally { booting = false; }
 }
 
+function updateSource() {
+  const due = $("cfg-source").value === "due";
+  $("cfg-mode").querySelector('option[value="mix"]').disabled = due;
+  if (due && $("cfg-mode").value === "mix") $("cfg-mode").value = "lang_to_pl";
+  $("cfg-source-info").textContent = due ? "Tylko słowa zaplanowane na dziś lub zaległe. Możesz powtarzać nawet jedno słowo." : "Losowy quiz ze wszystkich Twoich słów (minimum 4 słowa w słowniku).";
+}
+$("cfg-source").addEventListener("change", updateSource);
 $("btn-start").addEventListener("click", startQuiz);
 $("btn-retry-load").addEventListener("click", initialize);
 $("btn-resume").addEventListener("click", async () => {
