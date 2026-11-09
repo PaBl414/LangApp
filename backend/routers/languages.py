@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from ..models import Language, UserLanguage, User, UserWord, StudySession, StudyAnswer, Progress
 from ..schemas import AddLanguageRequest, AddWordRequest
+from ..grading import accepted_variants, clean_text
 from .learning import current_user
 
 router = APIRouter(prefix="/api", tags=["languages"])
@@ -156,6 +157,8 @@ async def list_words(
                 "id": w.id,
                 "word": w.word,
                 "translation_pl": w.translation_pl,
+                "translation_alternatives": w.translation_alternatives,
+                "word_alternatives": w.word_alternatives,
                 "is_valid": w.is_valid,
                 "created_at": w.created_at.isoformat(),
             }
@@ -174,8 +177,8 @@ async def add_word(
     """
     Dodaj słowo. Body: {"word": "...", "translation_pl": "...", "is_valid": true/false}
     """
-    word = payload.word
-    translation = payload.translation_pl
+    word = clean_text(payload.word)
+    translation = clean_text(payload.translation_pl)
     is_valid = payload.is_valid
 
     ul = (await db.execute(
@@ -203,6 +206,8 @@ async def add_word(
         language_id=language_id,
         word=word,
         translation_pl=translation,
+        translation_alternatives=accepted_variants(translation, payload.translation_alternatives)[1:],
+        word_alternatives=accepted_variants(word, payload.word_alternatives)[1:],
         is_valid=is_valid,
     )
     db.add(w)
@@ -210,11 +215,44 @@ async def add_word(
     await db.refresh(w)
     return {
         "ok": True,
-        "word": {
-            "id": w.id, "word": w.word,
-            "translation_pl": w.translation_pl, "is_valid": w.is_valid,
-        },
+        "word": word_response(w),
     }
+
+
+def word_response(word: UserWord):
+    return {
+        "id": word.id, "word": word.word, "translation_pl": word.translation_pl,
+        "translation_alternatives": word.translation_alternatives,
+        "word_alternatives": word.word_alternatives, "is_valid": word.is_valid,
+    }
+
+
+@router.put("/words/{word_id}")
+async def update_word(
+    word_id: int,
+    payload: AddWordRequest,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    word = (await db.execute(select(UserWord).where(
+        UserWord.id == word_id, UserWord.user_id == user.id,
+    ))).scalar_one_or_none()
+    if not word:
+        raise HTTPException(404, "Nie znaleziono słowa.")
+    primary = clean_text(payload.word)
+    duplicate = (await db.execute(select(UserWord.id).where(
+        UserWord.user_id == user.id, UserWord.language_id == word.language_id,
+        UserWord.word == primary, UserWord.id != word.id,
+    ).limit(1))).scalar_one_or_none()
+    if duplicate:
+        raise HTTPException(409, "To słowo już istnieje w tym języku.")
+    word.word = primary
+    word.translation_pl = clean_text(payload.translation_pl)
+    word.translation_alternatives = accepted_variants(word.translation_pl, payload.translation_alternatives)[1:]
+    word.word_alternatives = accepted_variants(word.word, payload.word_alternatives)[1:]
+    word.is_valid = payload.is_valid
+    await db.commit()
+    return {"ok": True, "word": word_response(word)}
 
 
 @router.delete("/words/{word_id}")

@@ -2,6 +2,7 @@
 <html lang="pl">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LangApp — Nauka</title>
   <link rel="stylesheet" href="/css/style.css" />
 </head>
@@ -12,11 +13,17 @@
   </header>
 
   <main class="dashboard study-wrapper">
+    <a id="study-login" href="/" hidden>Zaloguj się ponownie, a następnie wróć do tego quizu.</a>
 
     <!-- EKRAN 1: KONFIGURACJA -->
     <section id="screen-config" class="study-screen">
       <h1>Rozpocznij naukę</h1>
       <p class="muted" id="cfg-lang">Język: …</p>
+      <div id="resume-panel" hidden>
+        <label for="resume-session">Niedokończone quizy</label>
+        <select id="resume-session"></select>
+        <button id="btn-resume" class="ghost" type="button">Wznów wybrany quiz</button>
+      </div>
 
       <div class="form-row">
         <label>Tryb
@@ -34,8 +41,9 @@
         </label>
       </div>
 
-      <button id="btn-start" class="primary big">Rozpocznij</button>
-      <p id="cfg-msg" class="msg"></p>
+      <button id="btn-start" class="primary big" disabled>Rozpocznij nowy quiz</button>
+      <button id="btn-retry-load" class="ghost" type="button" hidden>Ponów wczytywanie</button>
+      <p id="cfg-msg" class="msg" role="status" aria-live="polite"></p>
     </section>
 
     <!-- EKRAN 2: QUIZ -->
@@ -51,12 +59,17 @@
         <h2 id="quiz-word">…</h2>
       </div>
 
-      <input type="text" id="quiz-answer" placeholder="Wpisz tłumaczenie…"
+      <label class="muted" for="quiz-answer">Twoja odpowiedź</label>
+      <input type="text" id="quiz-answer" placeholder="Wpisz tłumaczenie…" maxlength="128"
              autocomplete="off" autocapitalize="off" spellcheck="false" />
       <div class="quiz-actions">
+        <button id="btn-previous" class="ghost" type="button">Poprzednie pytanie</button>
         <button id="btn-next" class="primary big">Zatwierdź</button>
+        <button id="btn-save" class="ghost" type="button">Zapisz teraz</button>
+        <button id="btn-use-server" class="ghost" type="button" hidden>Wczytaj zapis z serwera</button>
       </div>
-      <p id="quiz-feedback" class="msg"></p>
+      <p id="quiz-save-status" class="msg" role="status" aria-live="polite"></p>
+      <p id="quiz-feedback" class="msg" role="status" aria-live="polite"></p>
     </section>
 
     <!-- EKRAN 3: WYNIK -->

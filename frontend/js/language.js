@@ -14,6 +14,8 @@ if (!LANGUAGE_ID) {
 }
 
 let LANG = null;
+let editingWord = null;
+let savingWord = false;
 
 // === 2. Wylogowanie ===
 document.getElementById("logout").addEventListener("click", async () => {
@@ -60,13 +62,20 @@ function renderWords(words) {
         <b>${escapeHtml(w.word)}</b>
         <span class="muted"> → </span>
         <span>${escapeHtml(w.translation_pl)}</span>
+        ${(w.translation_alternatives || []).length ? `<small class="muted"> (również: ${w.translation_alternatives.map(escapeHtml).join("; ")})</small>` : ""}
+        ${(w.word_alternatives || []).length ? `<small class="muted"> (inne formy: ${w.word_alternatives.map(escapeHtml).join("; ")})</small>` : ""}
       </div>
       <div class="word-actions">
         ${w.is_valid ? "" : `<span class="badge-warn" title="Słowo spoza bazy API">⚠</span>`}
+        <button class="ghost small" type="button" data-edit="${w.id}">Edytuj</button>
         <button class="ghost small danger" type="button" data-id="${w.id}">Usuń</button>
       </div>
     `;
     el.appendChild(div);
+  });
+
+  el.querySelectorAll("button[data-edit]").forEach(button => {
+    button.addEventListener("click", () => openEditor(words.find(word => word.id === Number(button.dataset.edit))));
   });
 
   el.querySelectorAll("button[data-id]").forEach(btn => {
@@ -99,22 +108,30 @@ const msg = document.getElementById("w-msg");
 const suggestionsEl = document.getElementById("w-suggest");
 const inputForeign = document.getElementById("w-foreign");
 const inputPolish = document.getElementById("w-polish");
+const translationAlternatives = document.getElementById("w-translation-alternatives");
+const wordAlternatives = document.getElementById("w-word-alternatives");
 
-document.getElementById("btn-add-word").addEventListener("click", () => {
-  inputForeign.value = "";
-  inputPolish.value = "";
+function openEditor(word = null) {
+  if (savingWord) return;
+  editingWord = word;
+  document.getElementById("word-modal-title").textContent = word ? "Edytuj słowo" : "Dodaj słowo";
+  inputForeign.value = word?.word || "";
+  inputPolish.value = word?.translation_pl || "";
+  translationAlternatives.value = (word?.translation_alternatives || []).join("\n");
+  wordAlternatives.value = (word?.word_alternatives || []).join("\n");
   msg.textContent = "";
   msg.className = "msg";
   suggestionsEl.classList.add("hidden");
   suggestionsEl.innerHTML = "";
   modal.classList.remove("hidden");
   inputForeign.focus();
-});
+}
+document.getElementById("btn-add-word").addEventListener("click", () => openEditor());
 
 function closeModal() { modal.classList.add("hidden"); }
 document.getElementById("modal-word-close").addEventListener("click", closeModal);
 document.getElementById("w-cancel").addEventListener("click", closeModal);
-modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+modal.addEventListener("click", (e) => { if (e.target === modal && !savingWord) closeModal(); });
 
 // Debounce walidacji przy wpisywaniu
 let checkTimer = null;
@@ -134,6 +151,7 @@ async function checkWord(word) {
     );
     if (!res.ok) return;
     const data = await res.json();
+    if (inputForeign.value.trim() !== word) return;
     if (!data.exists && data.suggestions?.length) {
       suggestionsEl.innerHTML = `<span class="muted">Czy chodziło Ci o:</span> ` +
         data.suggestions.map(s =>
@@ -154,6 +172,7 @@ async function checkWord(word) {
 
 // === 6. Zapis słowa ===
 document.getElementById("w-save").addEventListener("click", async () => {
+  if (savingWord) return;
   const word = inputForeign.value.trim();
   const translation = inputPolish.value.trim();
   msg.className = "msg";
@@ -164,42 +183,44 @@ document.getElementById("w-save").addEventListener("click", async () => {
     return;
   }
 
-  let is_valid = false;
+  const variants = input => input.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+  const edited = editingWord;
+  const payload = {
+    word, translation_pl: translation, is_valid: edited?.word === word ? edited.is_valid : false,
+    translation_alternatives: variants(translationAlternatives), word_alternatives: variants(wordAlternatives),
+  };
+  const controls = ["w-save", "w-cancel", "modal-word-close", "w-foreign", "w-polish", "w-translation-alternatives", "w-word-alternatives"].map(id => document.getElementById(id));
+  savingWord = true;
+  controls.forEach(control => { control.disabled = true; });
+  msg.textContent = "Zapisywanie…";
   try {
-    const chk = await fetch(
-      `/api/dictionary/check?lang=${encodeURIComponent(LANG.code)}&word=${encodeURIComponent(word)}`
-    );
-    if (!chk.ok) {
-      throw new Error(`Słownik niedostępny (HTTP ${chk.status}).`);
-    }
-    if (chk.ok) {
-      const info = await chk.json();
-      is_valid = !!info.exists;
-      if (!info.exists && !confirm(
-        `Słowo „${word}" nie zostało znalezione w bazie API.\n` +
-        `Dodać mimo to (zostanie oznaczone jako niezweryfikowane)?`
-      )) {
-        return;
+    if (edited?.word !== word) {
+      try {
+        const check = await fetch(`/api/dictionary/check?lang=${encodeURIComponent(LANG.code)}&word=${encodeURIComponent(word)}`);
+        if (!check.ok) throw new Error("Słownik niedostępny.");
+        payload.is_valid = !!(await check.json()).exists;
+        if (!payload.is_valid && !confirm(`Słowo „${word}" nie zostało znalezione. Zapisać jako niezweryfikowane?`)) return;
+      } catch {
+        payload.is_valid = false;
+        if (!confirm("Nie udało się zweryfikować słowa. Zapisać jako niezweryfikowane?")) return;
       }
     }
-  } catch (e) {
-    is_valid = false;
-    if (!confirm("Nie udało się zweryfikować słowa (brak internetu?). Dodać mimo to?")) return;
-  }
-
-  const res = await fetch(`/api/user/languages/${LANGUAGE_ID}/words`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ word, translation_pl: translation, is_valid }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
+    const res = await fetch(edited ? `/api/words/${edited.id}` : `/api/user/languages/${LANGUAGE_ID}/words`, {
+      method: edited ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      msg.classList.add("error");
+      msg.textContent = formatError(data, `Błąd (HTTP ${res.status}).`);
+      return;
+    }
+    closeModal();
+    await loadAll();
+  } catch {
     msg.classList.add("error");
-    msg.textContent = formatError(data, `Błąd (HTTP ${res.status}).`);
-    return;
-  }
-  closeModal();
-  loadAll();
+    msg.textContent = "Brak odpowiedzi serwera. Wpisane dane zachowano w formularzu.";
+  } finally { savingWord = false; controls.forEach(control => { control.disabled = false; }); }
 });
 
 // === 7. Przycisk „Ucz się" → /study?id=N ===

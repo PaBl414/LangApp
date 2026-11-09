@@ -39,14 +39,14 @@
   <div id="modal-word" class="modal hidden">
     <div class="modal-box">
       <div class="modal-head">
-        <h2>Dodaj słowo</h2>
+        <h2 id="word-modal-title">Dodaj słowo</h2>
         <button id="modal-word-close" class="ghost" type="button" aria-label="Zamknij">×</button>
       </div>
 
       <div class="modal-body">
         <label class="field">
           Słowo w języku obcym
-          <input type="text" id="w-foreign" placeholder="np. hello"
+          <input type="text" id="w-foreign" placeholder="np. hello" maxlength="128"
                  autocomplete="off" autocapitalize="off" spellcheck="false" />
         </label>
 
@@ -54,11 +54,21 @@
 
         <label class="field">
           Tłumaczenie polskie
-          <input type="text" id="w-polish" placeholder="np. cześć"
+          <input type="text" id="w-polish" placeholder="np. cześć" maxlength="128"
                  autocomplete="off" autocapitalize="off" spellcheck="false" />
         </label>
 
-        <p id="w-msg" class="msg"></p>
+        <label class="field">
+          Inne poprawne tłumaczenia polskie (opcjonalnie)
+          <textarea id="w-translation-alternatives" rows="3" placeholder="Jedno tłumaczenie w każdej linii, maksymalnie 10"></textarea>
+        </label>
+        <label class="field">
+          Inne poprawne formy w języku obcym (opcjonalnie)
+          <textarea id="w-word-alternatives" rows="3" placeholder="Jedna forma w każdej linii, maksymalnie 10"></textarea>
+        </label>
+        <p class="muted">Quiz akceptuje każdą wpisaną wersję. Akcenty i interpunkcja mają znaczenie.</p>
+
+        <p id="w-msg" class="msg" role="status" aria-live="polite"></p>
 
         <div class="modal-actions">
           <button id="w-save" class="primary" type="button">Zapisz</button>

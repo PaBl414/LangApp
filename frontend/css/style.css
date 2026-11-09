@@ -295,6 +295,24 @@ button.suggestion {
 }
 button.suggestion:hover { background: var(--accent); color: white; }
 
+textarea {
+  width: 100%; padding: 10px 12px; margin-top: 6px;
+  border: 1px solid rgba(148,163,184,.3); border-radius: 8px;
+  background: var(--bg); color: var(--text); font: inherit; resize: vertical;
+}
+.modal-body { overflow-y: auto; }
+button:disabled { opacity: .6; cursor: wait; }
+#resume-panel { padding: 16px; margin: 16px 0; border: 1px solid var(--muted); border-radius: 10px; }
+#resume-session { display: block; width: 100%; margin: 10px 0; padding: 8px; }
+.res-row { overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .dashboard { padding: 24px 14px; }
+  .word-row { align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+  .word-cell { overflow-wrap: anywhere; }
+  .word-actions { margin-left: auto; }
+  .quiz-actions > button { margin-top: 8px; }
+}
+
 /* Modal — dopasowanie pól */
 .modal-box label input { width: 100%; margin-top: 6px; }
 /* === Nauka === */

@@ -1,25 +1,70 @@
-"""
-Sesje nauki: start, submit, historia.
-"""
+"""Owned, resumable quizzes with versioned drafts and immutable final results."""
 import random
-from datetime import datetime
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..models import (
-    User, UserLanguage, UserWord,
-    StudySession, StudyAnswer, Language,
-)
+from ..grading import accepted_variants, is_correct, normalize_answer
+from ..models import Language, StudyAnswer, StudySession, User, UserLanguage, UserWord
+from ..schemas import StudyDraftRequest, StudyStartRequest, StudySubmitRequest
 from .learning import current_user
-from ..schemas import StudyStartRequest, StudySubmitRequest
 
 router = APIRouter(prefix="/api/study", tags=["study"])
+MIN_WORDS = 4
+CONFLICT = "Quiz zmienił się w innej karcie. Wczytaj aktualny zapis przed kontynuowaniem."
 
-VALID_MODES = {"lang_to_pl", "pl_to_lang", "mix"}
-MIN_WORDS = 4          # minimum słów, żeby quiz miał sens
-MAX_WORDS = 50
+
+async def owned_session(db: AsyncSession, session_id: int, user_id: int) -> StudySession:
+    session = (await db.execute(select(StudySession).where(
+        StudySession.id == session_id, StudySession.user_id == user_id,
+    ).execution_options(populate_existing=True))).scalar_one_or_none()
+    if session is None:
+        raise HTTPException(404, "Sesja nie istnieje.")
+    return session
+
+
+async def session_answers(db: AsyncSession, session_id: int) -> list[StudyAnswer]:
+    return list((await db.execute(select(StudyAnswer).where(
+        StudyAnswer.session_id == session_id,
+    ).order_by(StudyAnswer.id).execution_options(populate_existing=True))).scalars().all())
+
+
+def result_response(session: StudySession, answers: list[StudyAnswer]) -> dict:
+    return {
+        "session_id": session.id, "total": session.total, "correct": session.correct,
+        "percent": round(session.correct / session.total * 100) if session.total else 0,
+        "results": [{
+            "word_id": answer.word_id, "prompt": answer.prompt,
+            "expected": answer.expected,
+            "accepted_answers": accepted_variants(answer.expected, answer.accepted_answers),
+            "given": answer.given, "is_correct": answer.is_correct, "direction": answer.direction,
+        } for answer in answers],
+    }
+
+
+def session_response(session: StudySession, answers: list[StudyAnswer]) -> dict:
+    response = {
+        "session_id": session.id, "language_id": session.language_id,
+        "mode": session.mode, "total": session.total, "revision": session.revision,
+        "current_index": session.current_index, "finished": session.finished,
+        "questions": [{"word_id": answer.word_id, "direction": answer.direction, "prompt": answer.prompt} for answer in answers],
+        "answers": [{"word_id": answer.word_id, "given": answer.given} for answer in answers],
+    }
+    # Expected answers and grading are never exposed for an unfinished quiz.
+    if session.finished:
+        response["result"] = result_response(session, answers)
+    return response
+
+
+def given_map(payload, answers: list[StudyAnswer]) -> dict[int, str]:
+    given = {answer.word_id: answer.given for answer in payload.answers}
+    if given.keys() - {answer.word_id for answer in answers}:
+        raise HTTPException(400, "Odpowiedź dotyczy słowa spoza tej sesji.")
+    return given
 
 
 @router.post("/start")
@@ -28,104 +73,134 @@ async def start_study(
     user: User = Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Body: {"language_id": 1, "mode": "lang_to_pl", "count": 10}
-    Zwraca sesję + listę pytań (bez odpowiedzi).
-    """
-    lang_id = payload.language_id
-    mode = payload.mode
-    count = payload.count
+    user_id = user.id
+    request_id = str(payload.request_id) if payload.request_id else None
 
-    # czy język jest w profilu?
-    ul = (await db.execute(
-        select(UserLanguage).where(
-            UserLanguage.user_id == user.id,
-            UserLanguage.language_id == lang_id,
-        )
-    )).scalar_one_or_none()
-    if not ul:
+    async def existing_request():
+        if request_id is None:
+            return None
+        session = (await db.execute(select(StudySession).where(
+            StudySession.user_id == user_id, StudySession.start_request_id == request_id,
+        ))).scalar_one_or_none()
+        if session:
+            if (session.language_id, session.mode, session.requested_count) != (payload.language_id, payload.mode, payload.count):
+                raise HTTPException(409, "Identyfikator rozpoczęcia został już użyty dla innych ustawień.")
+            return session_response(session, await session_answers(db, session.id))
+        return None
+
+    existing = await existing_request()
+    if existing is not None:
+        return existing
+    membership = (await db.execute(select(UserLanguage.id).where(
+        UserLanguage.user_id == user_id, UserLanguage.language_id == payload.language_id,
+    ))).scalar_one_or_none()
+    if membership is None:
         raise HTTPException(404, "Ten język nie jest dodany do Twojego profilu.")
-
-    # pobierz słowa
-    words = (await db.execute(
-        select(UserWord).where(
-            UserWord.user_id == user.id,
-            UserWord.language_id == lang_id,
-        )
-    )).scalars().all()
-
+    words = list((await db.execute(select(UserWord).where(
+        UserWord.user_id == user_id, UserWord.language_id == payload.language_id,
+    ))).scalars().all())
     if len(words) < MIN_WORDS:
         raise HTTPException(400, f"Potrzebujesz co najmniej {MIN_WORDS} słów, żeby rozpocząć naukę.")
-
-    count = min(count, len(words))
-    chosen = random.sample(words, count)
-
-    # kierunek dla każdego pytania
-    questions = []
-    for w in chosen:
-        if mode == "mix":
-            direction = random.choice(["lang_to_pl", "pl_to_lang"])
-        else:
-            direction = mode
-
-        if direction == "lang_to_pl":
-            prompt = w.word
-            expected = w.translation_pl
-        else:
-            prompt = w.translation_pl
-            expected = w.word
-
-        questions.append({
-            "word_id": w.id,
-            "direction": direction,
-            "prompt": prompt,
-            "expected": expected,   # wysyłamy do frontu tylko po to, by sprawdzić lokalnie?
-        })
-
-    # UWAGA: nie chcemy wysyłać "expected" do klienta — inaczej można oszukać.
-    # Tworzymy sesję i zapisujemy poprawne odpowiedzi po stronie serwera
-    # w pamięci tymczasowej (dict) — patrz niżej: trzymamy je w sesji DB.
-    #
-    # Prościej: zapisujemy "oczekiwane" w bazie od razu jako StudyAnswer z given=""
-    # i is_correct=False; przy submit aktualizujemy.
-
+    chosen = random.sample(words, min(payload.count, len(words)))
     session = StudySession(
-        user_id=user.id,
-        language_id=lang_id,
-        mode=mode,
-        total=count,
-        correct=0,
-        finished=False,
+        user_id=user_id, language_id=payload.language_id, mode=payload.mode,
+        total=len(chosen), requested_count=payload.count, start_request_id=request_id,
     )
     db.add(session)
-    await db.flush()  # żeby mieć session.id
+    try:
+        await db.flush()
+        answers = []
+        for word in chosen:
+            direction = random.choice(["lang_to_pl", "pl_to_lang"]) if payload.mode == "mix" else payload.mode
+            to_polish = direction == "lang_to_pl"
+            expected = word.translation_pl if to_polish else word.word
+            variants = word.translation_alternatives if to_polish else word.word_alternatives
+            answer = StudyAnswer(
+                session_id=session.id, word_id=word.id, direction=direction,
+                prompt=word.word if to_polish else word.translation_pl,
+                expected=expected, accepted_answers=accepted_variants(expected, variants),
+                given="", is_correct=False,
+            )
+            answers.append(answer)
+            db.add(answer)
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        existing = await existing_request()
+        if existing is not None:
+            return existing
+        raise
+    return session_response(session, answers)
 
-    # Zapisz "szkielet" odpowiedzi z oczekiwanymi wartościami
-    for q in questions:
-        db.add(StudyAnswer(
-            session_id=session.id,
-            word_id=q["word_id"],
-            prompt=q["prompt"],
-            expected=q["expected"],
-            given="",
-            is_correct=False,
-            direction=q["direction"],
-        ))
+
+@router.get("/active")
+async def active_studies(
+    language_id: int,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    sessions = (await db.execute(select(StudySession).where(
+        StudySession.user_id == user.id, StudySession.language_id == language_id,
+        StudySession.finished.is_(False),
+    ).order_by(StudySession.id.desc()).limit(20))).scalars().all()
+    return {"sessions": [{
+        "session_id": session.id, "mode": session.mode, "total": session.total,
+        "current_index": session.current_index, "created_at": session.created_at.isoformat(),
+    } for session in sessions]}
+
+
+@router.get("/sessions/{session_id}")
+async def get_study(
+    session_id: int,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    session = await owned_session(db, session_id, user.id)
+    return session_response(session, await session_answers(db, session.id))
+
+
+@router.put("/sessions/{session_id}/draft")
+async def save_draft(
+    session_id: int,
+    payload: StudyDraftRequest,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = user.id
+    session = await owned_session(db, session_id, user_id)
+    answers = await session_answers(db, session_id)
+    given = given_map(payload, answers)
+
+    def same_draft():
+        return session.current_index == payload.current_index and all(
+            answer.given == given[answer.word_id] for answer in answers if answer.word_id in given
+        )
+
+    if session.finished:
+        raise HTTPException(409, "Quiz jest już zakończony. Wczytaj zapisany wynik.")
+    if payload.current_index >= session.total:
+        raise HTTPException(400, "Nieprawidłowy numer pytania.")
+    if same_draft():
+        return session_response(session, answers)
+    if session.revision != payload.revision:
+        raise HTTPException(409, CONFLICT)
+    claim = await db.execute(update(StudySession).where(
+        StudySession.id == session_id, StudySession.user_id == user_id,
+        StudySession.finished.is_(False), StudySession.revision == payload.revision,
+    ).values(revision=payload.revision + 1, current_index=payload.current_index).execution_options(synchronize_session=False))
+    if claim.rowcount != 1:
+        await db.rollback()
+        session = await owned_session(db, session_id, user_id)
+        answers = await session_answers(db, session_id)
+        if not session.finished and same_draft():
+            return session_response(session, answers)
+        raise HTTPException(409, CONFLICT)
+    for answer in answers:
+        if answer.word_id in given:
+            answer.given = given[answer.word_id]
     await db.commit()
     await db.refresh(session)
-
-    # Do klienta wysyłamy tylko prompt + id — bez "expected"
-    public_questions = [
-        {"word_id": q["word_id"], "direction": q["direction"], "prompt": q["prompt"]}
-        for q in questions
-    ]
-
-    return {
-        "session_id": session.id,
-        "mode": mode,
-        "total": count,
-        "questions": public_questions,
-    }
+    return session_response(session, answers)
 
 
 @router.post("/submit")
@@ -134,111 +209,54 @@ async def submit_study(
     user: User = Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Body: {
-      "session_id": 1,
-      "answers": [
-        {"word_id": 3, "given": "hello"},
-        ...
-      ]
-    }
-    Sprawdza odpowiedzi (case-insensitive, trim), zapisuje, zwraca wynik.
-    """
-    session_id = payload.session_id
-    answers = payload.answers
-
-    session = (await db.execute(
-        select(StudySession).where(
-            StudySession.id == session_id,
-            StudySession.user_id == user.id,
-        )
-    )).scalar_one_or_none()
-    if not session:
-        raise HTTPException(404, "Sesja nie istnieje.")
+    user_id, session_id = user.id, payload.session_id
+    session = await owned_session(db, session_id, user_id)
+    answers = await session_answers(db, session_id)
     if session.finished:
-        raise HTTPException(400, "Ta sesja została już zakończona.")
-
-    # Pobierz wszystkie StudyAnswer dla sesji
-    db_answers = (await db.execute(
-        select(StudyAnswer).where(StudyAnswer.session_id == session.id)
-    )).scalars().all()
-    by_word = {a.word_id: a for a in db_answers}
-
-    given_map = {answer.word_id: answer.given.strip() for answer in answers}
-    if given_map.keys() - by_word.keys():
-        raise HTTPException(400, "Odpowiedź dotyczy słowa spoza tej sesji.")
-
-    correct_count = 0
-    results = []
-    for a in db_answers:
-        given = given_map.get(a.word_id, "")
-        ok = _normalize(given) == _normalize(a.expected)
-        a.given = given
-        a.is_correct = ok
-        if ok:
-            correct_count += 1
-        results.append({
-            "word_id": a.word_id,
-            "prompt": a.prompt,
-            "expected": a.expected,
-            "given": given,
-            "is_correct": ok,
-            "direction": a.direction,
-        })
-
-    session.correct = correct_count
-    session.finished = True
-    session.finished_at = datetime.utcnow()
+        return result_response(session, answers)
+    given = given_map(payload, answers)
+    if payload.revision is not None and session.revision != payload.revision:
+        raise HTTPException(409, CONFLICT)
+    revision = session.revision
+    graded = [(answer, given.get(answer.word_id, answer.given)) for answer in answers]
+    correct = sum(is_correct(value, answer.expected, answer.accepted_answers) for answer, value in graded)
+    claim = await db.execute(update(StudySession).where(
+        StudySession.id == session_id, StudySession.user_id == user_id,
+        StudySession.finished.is_(False), StudySession.revision == revision,
+    ).values(
+        revision=revision + 1, correct=correct, finished=True, current_index=session.total,
+        finished_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    ).execution_options(synchronize_session=False))
+    if claim.rowcount != 1:
+        await db.rollback()
+        session = await owned_session(db, session_id, user_id)
+        if session.finished:
+            return result_response(session, await session_answers(db, session_id))
+        raise HTTPException(409, CONFLICT)
+    for answer, value in graded:
+        answer.given = value
+        answer.is_correct = is_correct(value, answer.expected, answer.accepted_answers)
     await db.commit()
-
-    return {
-        "session_id": session.id,
-        "total": session.total,
-        "correct": correct_count,
-        "percent": round(correct_count / session.total * 100) if session.total else 0,
-        "results": results,
-    }
+    await db.refresh(session)
+    return result_response(session, answers)
 
 
-def _normalize(s: str) -> str:
-    return (s or "").strip().lower().replace("  ", " ")
+# Kept for callers of the former normalization helper.
+_normalize = normalize_answer
 
 
 @router.get("/history")
-async def study_history(
-    user: User = Depends(current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Ostatnie 20 sesji użytkownika."""
-    rows = (await db.execute(
-        select(StudySession)
-        .where(StudySession.user_id == user.id, StudySession.finished == True)
-        .order_by(StudySession.finished_at.desc())
-        .limit(20)
-    )).scalars().all()
-
-    # Pobierz języki dla czytelnego wyświetlenia
-    lang_ids = {r.language_id for r in rows}
-    lang_map = {}
-    if lang_ids:
-        langs = (await db.execute(
-            select(Language).where(Language.id.in_(lang_ids))
-        )).scalars().all()
-        lang_map = {l.id: l for l in langs}
-
-    return [
-        {
-            "id": r.id,
-            "language": {
-                "id": lang_map[r.language_id].id,
-                "name_pl": lang_map[r.language_id].name_pl,
-                "flag": lang_map[r.language_id].flag_emoji,
-            } if r.language_id in lang_map else None,
-            "mode": r.mode,
-            "total": r.total,
-            "correct": r.correct,
-            "percent": round(r.correct / r.total * 100) if r.total else 0,
-            "finished_at": r.finished_at.isoformat() if r.finished_at else None,
-        }
-        for r in rows
-    ]
+async def study_history(user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    sessions = (await db.execute(select(StudySession).where(
+        StudySession.user_id == user.id, StudySession.finished.is_(True),
+    ).order_by(StudySession.finished_at.desc(), StudySession.id.desc()).limit(20))).scalars().all()
+    language_ids = {session.language_id for session in sessions}
+    languages = (await db.execute(select(Language).where(Language.id.in_(language_ids)))).scalars().all() if language_ids else []
+    language_map = {language.id: language for language in languages}
+    return [{
+        "id": session.id,
+        "language": {"id": language.id, "name_pl": language.name_pl, "flag": language.flag_emoji} if (language := language_map.get(session.language_id)) else None,
+        "mode": session.mode, "total": session.total, "correct": session.correct,
+        "percent": round(session.correct / session.total * 100) if session.total else 0,
+        "finished_at": session.finished_at.isoformat() if session.finished_at else None,
+    } for session in sessions]

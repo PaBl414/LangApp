@@ -10,6 +10,8 @@ LangApp is a small Polish-language vocabulary learning app. It provides account 
 - A catalog of languages seeded from `backend/seed_languages.py`.
 - User-owned language and vocabulary lists.
 - Quiz sessions in either translation direction or mixed mode.
+- Resumable quizzes with automatic drafts, local recovery and safe submission retries.
+- Editable vocabulary with explicit accepted alternatives in both translation directions.
 - Optional word suggestions and English dictionary lookup through third-party APIs.
 
 ## Requirements
@@ -92,9 +94,51 @@ The app serves its frontend and API from the same origin. Main route groups:
 - `GET /api/me`, `GET /api/progress`
 - `GET /api/languages`, `/api/user/languages` and related word routes
 - `POST /api/study/start` and study answer/history routes
+- `GET /api/study/active?language_id=...`, `GET /api/study/sessions/{id}`
+- `PUT /api/study/sessions/{id}/draft`, `POST /api/study/submit`
+- `PUT /api/words/{id}` for editing vocabulary and accepted alternatives
 - `GET /api/dictionary/check`
 
 Use `/docs` while the local server is running for the complete generated OpenAPI schema and request models.
+
+## Quiz recovery and answer grading
+
+- Starting from the browser creates a UUID request identifier. Retrying the same
+  start request returns the same quiz, including its original question order.
+  API clients should send `request_id` to get this guarantee. Reusing it with
+  different settings is rejected with HTTP 409.
+- Drafts contain the current question and entered answers. The browser saves
+  them locally on input and synchronizes them to the server after a short pause.
+  Refreshing the quiz URL restores the server draft and any pending local edits;
+  the configuration screen also lists up to 20 recent unfinished quizzes.
+- Draft updates use a revision number. A stale browser tab cannot overwrite a
+  newer draft. Conflicting local text is kept until the user explicitly chooses
+  to load the server version. Network retries of an already saved identical
+  draft are safe.
+- Completed results are immutable. Repeating submission returns the original
+  result; reloading its quiz URL retrieves it even if the completion response was
+  lost. The revision sent by the browser also protects finalization from stale
+  drafts. Quiz ownership is checked on every endpoint.
+- Local draft storage is separated by account and quiz. Successful synchronization
+  removes the local copy. Explicit logout clears the current quiz's local copy;
+  the user is warned if this would discard unsynchronized text. The local copy is
+  browser data, not encrypted storage. If browser storage is blocked, a warning
+  is shown and server saving still works. This is not an offline PWA: initially
+  loading the application and authenticating require a server connection.
+- Use **Edytuj** next to a word to add accepted Polish translations or foreign
+  forms, one per line (up to 10 alternatives per direction, 128 characters each).
+  Every quiz snapshots its accepted answers at start, so editing or deleting a
+  vocabulary entry does not change the grading of an existing quiz. Removing an
+  entire language still deletes its quizzes as documented above.
+- Grading uses Unicode NFC, case folding, and collapsed whitespace. Accents,
+  punctuation and spelling remain significant. Alternatives are explicit;
+  commas or slashes in an existing translation are never automatically split.
+  No fuzzy or AI-based grading is performed.
+
+Migration `0002_reliable_quizzes` adds draft and alternative-answer fields with
+defaults that preserve existing vocabulary and quiz rows. Existing quizzes keep
+their original single expected answer. Back up an existing database before
+upgrading, as described above.
 
 ## Privacy and security notes
 

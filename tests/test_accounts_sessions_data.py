@@ -21,7 +21,7 @@ from backend.models import Language, Progress, Session, StudyAnswer, StudySessio
 from backend.sessions import COOKIE_NAME, SESSION_MAX_AGE
 
 
-class AccountDataTests(unittest.IsolatedAsyncioTestCase):
+class APITestCase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="langapp-tests-")
         self.addCleanup(temporary.cleanup)
@@ -78,6 +78,8 @@ class AccountDataTests(unittest.IsolatedAsyncioTestCase):
             "login": login, "password": "Regression!123", "cookie_id": device, "fingerprint": fingerprint,
         })
 
+
+class AccountDataTests(APITestCase):
     async def test_shared_device_allows_login_to_both_accounts(self):
         await self.register(device="shared-device-12345", fingerprint="shared-fingerprint-12345")
         self.client.cookies.clear()

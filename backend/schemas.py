@@ -2,6 +2,7 @@
 Schematy Pydantic — walidacja żądań i odpowiedzi.
 """
 from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 import re
@@ -63,6 +64,8 @@ class AddLanguageRequest(APIRequest):
 class AddWordRequest(APIRequest):
     word: WordText
     translation_pl: WordText
+    translation_alternatives: list[WordText] = Field(default_factory=list, max_length=10)
+    word_alternatives: list[WordText] = Field(default_factory=list, max_length=10)
     # This remains a client-reported flag until dictionary verification moves server-side.
     is_valid: bool = Field(default=False, strict=True)
 
@@ -71,6 +74,7 @@ class StudyStartRequest(APIRequest):
     language_id: PositiveId
     mode: Literal["lang_to_pl", "pl_to_lang", "mix"]
     count: int = Field(default=10, strict=True, ge=1, le=50)
+    request_id: UUID | None = None
 
 
 class StudyAnswerRequest(APIRequest):
@@ -78,8 +82,7 @@ class StudyAnswerRequest(APIRequest):
     given: str = Field(default="", max_length=128, strict=True)
 
 
-class StudySubmitRequest(APIRequest):
-    session_id: PositiveId
+class StudyAnswersRequest(APIRequest):
     answers: list[StudyAnswerRequest] = Field(default_factory=list, max_length=50)
 
     @model_validator(mode="after")
@@ -88,3 +91,13 @@ class StudySubmitRequest(APIRequest):
         if len(ids) != len(set(ids)):
             raise ValueError("Każde słowo może mieć tylko jedną odpowiedź.")
         return self
+
+
+class StudySubmitRequest(StudyAnswersRequest):
+    session_id: PositiveId
+    revision: int | None = Field(default=None, strict=True, ge=0)
+
+
+class StudyDraftRequest(StudyAnswersRequest):
+    revision: int = Field(strict=True, ge=0)
+    current_index: int = Field(strict=True, ge=0, le=49)
