@@ -23,11 +23,6 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     last_login: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    __table_args__ = (
-        UniqueConstraint("cookie_id", name="uq_cookie_id"),
-    )
-
-
 class Session(Base):
     __tablename__ = "sessions"
 

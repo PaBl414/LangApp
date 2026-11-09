@@ -1,3 +1,5 @@
+import { formatError } from "./api-errors.js";
+
 // Wylogowanie
 document.getElementById("logout").addEventListener("click", async () => {
   try { await fetch("/api/auth/logout", { method: "POST" }); } catch (e) {}
@@ -41,9 +43,17 @@ async function loadMyLanguages() {
   myLangsEl.querySelectorAll("button[data-ulid]").forEach(btn => {
     btn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      if (!confirm("Usunąć ten język? Wszystkie słowa w nim też znikną.")) return;
-      await fetch(`/api/user/languages/${btn.dataset.ulid}`, { method: "DELETE" });
-      loadMyLanguages();
+      if (!confirm("Usunąć język wraz ze słowami, historią quizów i postępem? Tej operacji nie można cofnąć.")) return;
+      try {
+        const res = await fetch(`/api/user/languages/${btn.dataset.ulid}`, { method: "DELETE" });
+        if (!res.ok) {
+          alert(formatError(await res.json().catch(() => ({}))));
+          return;
+        }
+        await loadMyLanguages();
+      } catch {
+        alert("Błąd sieci. Nie udało się potwierdzić usunięcia języka.");
+      }
     });
   });
 }

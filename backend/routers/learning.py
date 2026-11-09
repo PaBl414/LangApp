@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..models import Session as SessionModel, User, Progress
+from ..sessions import COOKIE_NAME, session_cutoff
 
 router = APIRouter(prefix="/api", tags=["learning"])
-COOKIE_NAME = "langapp_session"
 
 
 async def current_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
@@ -21,10 +21,16 @@ async def current_user(request: Request, db: AsyncSession = Depends(get_db)) -> 
     )).scalar_one_or_none()
     if not s:
         raise HTTPException(401, "Sesja wygasła.")
+    if s.created_at <= session_cutoff():
+        await db.delete(s)
+        await db.commit()
+        raise HTTPException(401, "Sesja wygasła. Zaloguj się ponownie.")
     user = (await db.execute(
         select(User).where(User.id == s.user_id)
     )).scalar_one_or_none()
     if not user:
+        await db.delete(s)
+        await db.commit()
         raise HTTPException(401, "Użytkownik nie istnieje.")
     return user
 

@@ -2,13 +2,14 @@
 Endpointy: lista języków, języki użytkownika.
 """
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..models import Language, UserLanguage
+from ..models import Language, UserLanguage, User, UserWord, StudySession, StudyAnswer, Progress
+from ..schemas import AddLanguageRequest, AddWordRequest
 from .learning import current_user
-from ..models import User
 
 router = APIRouter(prefix="/api", tags=["languages"])
 
@@ -49,17 +50,15 @@ async def my_languages(
 
 @router.post("/user/languages")
 async def add_language(
-    payload: dict,
+    payload: AddLanguageRequest,
     user: User = Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Dodaj język do profilu użytkownika. Body: {"language_id": 3}"""
-    lang_id = payload.get("language_id")
-    if not isinstance(lang_id, int):
-        raise HTTPException(400, "Brak language_id.")
+    lang_id = payload.language_id
 
     lang = (await db.execute(select(Language).where(Language.id == lang_id))).scalar_one_or_none()
-    if not lang:
+    if not lang or not lang.is_active:
         raise HTTPException(404, "Język nie istnieje.")
 
     dup = (await db.execute(
@@ -73,7 +72,11 @@ async def add_language(
 
     ul = UserLanguage(user_id=user.id, language_id=lang_id)
     db.add(ul)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(409, "Ten język jest już dodany.")
     await db.refresh(ul)
     return {"ok": True, "user_language_id": ul.id, "language_id": lang_id}
 
@@ -92,11 +95,26 @@ async def remove_language(
     )).scalar_one_or_none()
     if not ul:
         raise HTTPException(404, "Nie znaleziono.")
+    study_ids = select(StudySession.id).where(
+        StudySession.user_id == user.id,
+        StudySession.language_id == ul.language_id,
+    )
+    # Delete snapshots before their parent sessions, in the same transaction.
+    await db.execute(delete(StudyAnswer).where(StudyAnswer.session_id.in_(study_ids)))
+    await db.execute(delete(StudySession).where(
+        StudySession.user_id == user.id, StudySession.language_id == ul.language_id,
+    ))
+    await db.execute(delete(UserWord).where(
+        UserWord.user_id == user.id, UserWord.language_id == ul.language_id,
+    ))
+    language = await db.get(Language, ul.language_id)
+    if language:
+        await db.execute(delete(Progress).where(
+            Progress.user_id == user.id, Progress.language == language.code,
+        ))
     await db.delete(ul)
     await db.commit()
     return {"ok": True}
-from ..models import UserWord
-from ..models import Language as LanguageModel
 
 
 @router.get("/user/languages/{language_id}/words")
@@ -117,7 +135,7 @@ async def list_words(
         raise HTTPException(404, "Ten język nie jest dodany do Twojego profilu.")
 
     lang = (await db.execute(
-        select(LanguageModel).where(LanguageModel.id == language_id)
+        select(Language).where(Language.id == language_id)
     )).scalar_one_or_none()
 
     words = (await db.execute(
@@ -149,21 +167,16 @@ async def list_words(
 @router.post("/user/languages/{language_id}/words")
 async def add_word(
     language_id: int,
-    payload: dict,
+    payload: AddWordRequest,
     user: User = Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Dodaj słowo. Body: {"word": "...", "translation_pl": "...", "is_valid": true/false}
     """
-    word = (payload.get("word") or "").strip()
-    translation = (payload.get("translation_pl") or "").strip()
-    is_valid = bool(payload.get("is_valid", True))
-
-    if not word or not translation:
-        raise HTTPException(400, "Słowo i tłumaczenie nie mogą być puste.")
-    if len(word) > 128 or len(translation) > 128:
-        raise HTTPException(400, "Słowo/tłumaczenie za długie (max 128 znaków).")
+    word = payload.word
+    translation = payload.translation_pl
+    is_valid = payload.is_valid
 
     ul = (await db.execute(
         select(UserLanguage).where(

@@ -3,8 +3,11 @@ Warstwa bazy danych: silnik async SQLite + sesje SQLAlchemy.
 """
 import os
 from pathlib import Path
+from collections.abc import AsyncIterator
 
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from alembic import command
+from alembic.config import Config
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession, AsyncEngine
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.engine import URL
 
@@ -22,14 +25,18 @@ class Base(DeclarativeBase):
     pass
 
 
-async def get_db() -> AsyncSession:
+async def get_db() -> AsyncIterator[AsyncSession]:
     async with AsyncSessionLocal() as session:
         yield session
 
 
-async def init_db() -> None:
+async def init_db(db_engine: AsyncEngine | None = None) -> None:
     (BASE_DIR / "data").mkdir(parents=True, exist_ok=True)
-    # import modeli, aby zarejestrować tabele
-    from . import models  # noqa: F401
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    def upgrade(connection):
+        config = Config(str(BASE_DIR / "alembic.ini"))
+        config.set_main_option("script_location", str(BASE_DIR / "migrations"))
+        config.attributes["connection"] = connection
+        command.upgrade(config, "head")
+
+    async with (db_engine if db_engine is not None else engine).begin() as conn:
+        await conn.run_sync(upgrade)

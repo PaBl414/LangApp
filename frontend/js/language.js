@@ -1,3 +1,5 @@
+import { formatError } from "./api-errors.js";
+
 /**
  * language.js — widok pojedynczego języka.
  * Lista słów, dodawanie z walidacją API (Datamuse + Free Dictionary), usuwanie.
@@ -70,8 +72,16 @@ function renderWords(words) {
   el.querySelectorAll("button[data-id]").forEach(btn => {
     btn.addEventListener("click", async () => {
       if (!confirm("Usunąć to słowo?")) return;
-      await fetch(`/api/words/${btn.dataset.id}`, { method: "DELETE" });
-      loadAll();
+      try {
+        const res = await fetch(`/api/words/${btn.dataset.id}`, { method: "DELETE" });
+        if (!res.ok) {
+          alert(formatError(await res.json().catch(() => ({}))));
+          return;
+        }
+        await loadAll();
+      } catch {
+        alert("Błąd sieci. Nie udało się potwierdzić usunięcia słowa.");
+      }
     });
   });
 }
@@ -154,11 +164,14 @@ document.getElementById("w-save").addEventListener("click", async () => {
     return;
   }
 
-  let is_valid = true;
+  let is_valid = false;
   try {
     const chk = await fetch(
       `/api/dictionary/check?lang=${encodeURIComponent(LANG.code)}&word=${encodeURIComponent(word)}`
     );
+    if (!chk.ok) {
+      throw new Error(`Słownik niedostępny (HTTP ${chk.status}).`);
+    }
     if (chk.ok) {
       const info = await chk.json();
       is_valid = !!info.exists;
@@ -182,7 +195,7 @@ document.getElementById("w-save").addEventListener("click", async () => {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     msg.classList.add("error");
-    msg.textContent = data.detail || `Błąd (HTTP ${res.status}).`;
+    msg.textContent = formatError(data, `Błąd (HTTP ${res.status}).`);
     return;
   }
   closeModal();

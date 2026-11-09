@@ -1,29 +1,41 @@
 """
 Endpointy rejestracji, logowania i wylogowania.
-Wersja debug: loguje każde wejście, walidację i wynik.
 """
 import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from ..database import get_db
 from ..models import User, Session as SessionModel
 from ..schemas import RegisterRequest, LoginRequest
 from ..security import hash_password, verify_password, new_session_token
 from ..antifraud import is_duplicate
+from ..sessions import COOKIE_NAME, SESSION_MAX_AGE, session_cutoff
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-COOKIE_NAME = "langapp_session"
 COOKIE_ID_NAME = "langapp_cid"
 COOKIE_SECURE = os.getenv("LANGAPP_COOKIE_SECURE", "0").lower() in {"1", "true", "yes"}
 
 
 def client_ip(request: Request) -> str:
     return request.client.host if request.client else "0.0.0.0"
+
+
+async def create_session(db: AsyncSession, user_id: int, request: Request) -> str:
+    """Replace this browser's previous session and remove expired tokens."""
+    await db.execute(delete(SessionModel).where(SessionModel.created_at <= session_cutoff()))
+    previous_token = request.cookies.get(COOKIE_NAME)
+    if previous_token:
+        await db.execute(delete(SessionModel).where(SessionModel.token == previous_token))
+    token = new_session_token()
+    db.add(SessionModel(token=token, user_id=user_id))
+    return token
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
@@ -50,20 +62,23 @@ async def register(
 
     user = User(
         login=payload.login,
-        password_hash=hash_password(payload.password),
+        password_hash=await run_in_threadpool(hash_password, payload.password),
         cookie_id=payload.cookie_id,
         fingerprint=payload.fingerprint,
         ip_address=ip,
     )
     db.add(user)
-    await db.flush()
-    token = new_session_token()
-    db.add(SessionModel(token=token, user_id=user.id))
-    await db.commit()
+    try:
+        await db.flush()
+        token = await create_session(db, user.id, request)
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(409, "Taki login już istnieje.")
     await db.refresh(user)
 
     response.set_cookie(
-        COOKIE_NAME, token, max_age=60 * 60 * 24 * 7,
+        COOKIE_NAME, token, max_age=SESSION_MAX_AGE,
         httponly=True, samesite="lax", secure=COOKIE_SECURE,
     )
 
@@ -88,7 +103,9 @@ async def login(
     if not user:
         raise HTTPException(401, "Nieprawidłowy login lub hasło.")
 
-    password_valid, upgraded_hash = verify_password(payload.password, user.password_hash)
+    password_valid, upgraded_hash = await run_in_threadpool(
+        verify_password, payload.password, user.password_hash
+    )
     if not password_valid:
         raise HTTPException(401, "Nieprawidłowy login lub hasło.")
     if upgraded_hash:
@@ -99,10 +116,9 @@ async def login(
     user.ip_address = client_ip(request)
     user.last_login = datetime.utcnow()
 
-    token = new_session_token()
-    db.add(SessionModel(token=token, user_id=user.id))
+    token = await create_session(db, user.id, request)
     await db.commit()
-    response.set_cookie(COOKIE_NAME, token, max_age=60 * 60 * 24 * 7, httponly=True, samesite="lax", secure=COOKIE_SECURE)
+    response.set_cookie(COOKIE_NAME, token, max_age=SESSION_MAX_AGE, httponly=True, samesite="lax", secure=COOKIE_SECURE)
     response.set_cookie(COOKIE_ID_NAME, payload.cookie_id, max_age=60 * 60 * 24 * 365, httponly=False, samesite="lax", secure=COOKIE_SECURE)
     return {"ok": True, "user": {"id": user.id, "login": user.login}}
 

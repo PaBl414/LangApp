@@ -44,11 +44,42 @@ python -m uvicorn backend.main:app --reload
 
 The SQLite database is created at `data/langapp.db` relative to the project directory by default. Set `LANGAPP_DATABASE_URL` to use another SQLAlchemy async database URL. For example, `sqlite+aiosqlite:///./data/dev.db`.
 
+## Database upgrades and sessions
+
+Startup and the language seeder automatically run Alembic migrations. The initial
+migration also adopts databases created by earlier LangApp versions: it preserves
+existing rows and removes the unique constraint on browser identifiers, allowing
+different accounts to log in on the same device. Stop other app processes and back
+up an existing database before its first upgrade. For SQLite, copy the database
+while the app is stopped, or use SQLite's backup API for an online backup.
+
+You can also migrate explicitly from the repository root:
+
+```sh
+python -m alembic upgrade head
+```
+
+The initial migration supports upgrades only; restore a backup to roll it back.
+For deployments with multiple workers, run the migration once before starting
+workers instead of letting their first startup migrate concurrently.
+
+Authentication sessions expire on the server after seven days. A successful
+login replaces the session previously held by that browser; logout revokes its
+token. Other devices keep their own sessions. The basic duplicate-registration
+check still compares the combination of browser identifier, fingerprint and IP;
+a browser identifier alone is not an account identifier.
+
+Removing a language permanently deletes that user's words, quiz sessions,
+recorded answers and progress for that language. Adding it again starts with an
+empty list. Other users and other languages are unaffected.
+
 ## Project layout
 
 ```text
 backend/       FastAPI app, data models, authentication and API routes
 frontend/      Static pages, styles and browser JavaScript
+migrations/    Versioned database schema and legacy database upgrades
+tests/         Isolated API and migration regression tests
 data/          Local SQLite data (ignored by Git)
 requirements.txt
 ```
@@ -78,6 +109,8 @@ The dictionary route sends the queried word to third-party services (Free Dictio
 ## Development notes
 
 - Seed or update the language catalog with `python -m backend.seed_languages`.
-- Database tables are created automatically at startup. There are no schema migrations yet; before changing an existing deployed schema, introduce a migration tool and migration scripts.
-- The repository currently has no automated test suite or CI workflow.
+- Database schema changes belong in Alembic revisions under `migrations/`.
+- Run regressions with `python -m unittest discover -s tests -v`. Tests use temporary SQLite databases and in-process ASGI requests, without opening a network port or changing the local application database. No additional test dependencies are required.
+- API request models reject invalid types, oversized text, duplicate quiz answers and unknown fields with HTTP 422. Answers for words outside the selected quiz are rejected with HTTP 400. Word validation status is currently client-reported; it defaults to unverified and must be a JSON boolean, not a string.
+- There is no CI workflow yet.
 - No license is included. Add a license only after deciding which reuse terms you want to grant.

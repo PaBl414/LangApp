@@ -1,3 +1,5 @@
+import { formatError } from "./api-errors.js";
+
 const params = new URLSearchParams(window.location.search);
 const LANGUAGE_ID = parseInt(params.get("id"), 10);
 if (!LANGUAGE_ID) window.location.href = "/dashboard";
@@ -41,7 +43,7 @@ document.getElementById("btn-start").addEventListener("click", async () => {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     msg.classList.add("error");
-    msg.textContent = data.detail || `Błąd (HTTP ${res.status}).`;
+    msg.textContent = formatError(data, `Błąd (HTTP ${res.status}).`);
     return;
   }
 
@@ -109,7 +111,7 @@ async function submitAll() {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    alert(data.detail || `Błąd (HTTP ${res.status}).`);
+    alert(formatError(data, `Błąd (HTTP ${res.status}).`));
     return;
   }
   showResult(data);

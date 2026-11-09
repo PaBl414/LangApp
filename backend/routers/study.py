@@ -13,6 +13,7 @@ from ..models import (
     StudySession, StudyAnswer, Language,
 )
 from .learning import current_user
+from ..schemas import StudyStartRequest, StudySubmitRequest
 
 router = APIRouter(prefix="/api/study", tags=["study"])
 
@@ -23,7 +24,7 @@ MAX_WORDS = 50
 
 @router.post("/start")
 async def start_study(
-    payload: dict,
+    payload: StudyStartRequest,
     user: User = Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -31,16 +32,9 @@ async def start_study(
     Body: {"language_id": 1, "mode": "lang_to_pl", "count": 10}
     Zwraca sesję + listę pytań (bez odpowiedzi).
     """
-    lang_id = payload.get("language_id")
-    mode = payload.get("mode")
-    count = payload.get("count", 10)
-
-    if not isinstance(lang_id, int):
-        raise HTTPException(400, "Brak language_id.")
-    if mode not in VALID_MODES:
-        raise HTTPException(400, f"Tryb musi być jednym z: {sorted(VALID_MODES)}.")
-    if not isinstance(count, int) or count < 1 or count > MAX_WORDS:
-        raise HTTPException(400, f"Liczba słów musi być 1..{MAX_WORDS}.")
+    lang_id = payload.language_id
+    mode = payload.mode
+    count = payload.count
 
     # czy język jest w profilu?
     ul = (await db.execute(
@@ -136,7 +130,7 @@ async def start_study(
 
 @router.post("/submit")
 async def submit_study(
-    payload: dict,
+    payload: StudySubmitRequest,
     user: User = Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -150,12 +144,8 @@ async def submit_study(
     }
     Sprawdza odpowiedzi (case-insensitive, trim), zapisuje, zwraca wynik.
     """
-    session_id = payload.get("session_id")
-    answers = payload.get("answers") or []
-    if not isinstance(session_id, int):
-        raise HTTPException(400, "Brak session_id.")
-    if not isinstance(answers, list):
-        raise HTTPException(400, "answers musi być listą.")
+    session_id = payload.session_id
+    answers = payload.answers
 
     session = (await db.execute(
         select(StudySession).where(
@@ -174,7 +164,9 @@ async def submit_study(
     )).scalars().all()
     by_word = {a.word_id: a for a in db_answers}
 
-    given_map = {int(a["word_id"]): (a.get("given") or "").strip() for a in answers if "word_id" in a}
+    given_map = {answer.word_id: answer.given.strip() for answer in answers}
+    if given_map.keys() - by_word.keys():
+        raise HTTPException(400, "Odpowiedź dotyczy słowa spoza tej sesji.")
 
     correct_count = 0
     results = []

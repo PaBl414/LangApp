@@ -10,10 +10,10 @@ from .models import User
 async def is_duplicate(
     db: AsyncSession, cookie_id: str, fingerprint: str, ip: str
 ) -> bool:
-    stmt = select(User).where(
+    stmt = select(User.id).where(
         User.cookie_id == cookie_id,
         User.fingerprint == fingerprint,
         User.ip_address == ip,
-    )
+    ).limit(1)
     result = await db.execute(stmt)
     return result.scalar_one_or_none() is not None
