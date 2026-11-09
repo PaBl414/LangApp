@@ -2,7 +2,7 @@
 Endpointy rejestracji, logowania i wylogowania.
 Wersja debug: loguje każde wejście, walidację i wynik.
 """
-import logging
+import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -15,11 +15,11 @@ from ..schemas import RegisterRequest, LoginRequest
 from ..security import hash_password, verify_password, new_session_token
 from ..antifraud import is_duplicate
 
-log = logging.getLogger("langapp.auth")
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 COOKIE_NAME = "langapp_session"
 COOKIE_ID_NAME = "langapp_cid"
+COOKIE_SECURE = os.getenv("LANGAPP_COOKIE_SECURE", "0").lower() in {"1", "true", "yes"}
 
 
 def client_ip(request: Request) -> str:
@@ -34,22 +34,14 @@ async def register(
     db: AsyncSession = Depends(get_db),
 ):
     ip = client_ip(request)
-    log.info("== REGISTER == login=%r ip=%s fp_len=%d cookie_len=%d",
-             payload.login, ip, len(payload.fingerprint), len(payload.cookie_id))
-    log.debug("   fingerprint=%r", payload.fingerprint[:80])
-    log.debug("   cookie_id=%r", payload.cookie_id[:80])
-
     if payload.password != payload.password_confirm:
-        log.warning("Hasła są różne")
         raise HTTPException(400, "Hasła nie są identyczne.")
 
     existing_login = await db.execute(select(User).where(User.login == payload.login))
     if existing_login.scalar_one_or_none():
-        log.warning("   login już istnieje: %s", payload.login)
         raise HTTPException(409, "Taki login już istnieje.")
 
     dup = await is_duplicate(db, payload.cookie_id, payload.fingerprint, ip)
-    log.info("   antifraud duplicate=%s", dup)
     if dup:
         raise HTTPException(
             status_code=403,
@@ -64,13 +56,21 @@ async def register(
         ip_address=ip,
     )
     db.add(user)
+    await db.flush()
+    token = new_session_token()
+    db.add(SessionModel(token=token, user_id=user.id))
     await db.commit()
     await db.refresh(user)
-    log.info("   UTWORZONO konto id=%s login=%s", user.id, user.login)
+
+    response.set_cookie(
+        COOKIE_NAME, token, max_age=60 * 60 * 24 * 7,
+        httponly=True, samesite="lax", secure=COOKIE_SECURE,
+    )
 
     response.set_cookie(
         COOKIE_ID_NAME, payload.cookie_id,
         max_age=60 * 60 * 24 * 365, httponly=False, samesite="lax",
+        secure=COOKIE_SECURE,
     )
     return {"ok": True, "user": {"id": user.id, "login": user.login}}
 
@@ -82,17 +82,13 @@ async def login(
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    log.info("== LOGIN == login=%r ip=%s", payload.login, client_ip(request))
-
     result = await db.execute(select(User).where(User.login == payload.login))
     user = result.scalar_one_or_none()
 
     if not user:
-        log.warning("   nie ma takiego loginu")
         raise HTTPException(401, "Nieprawidłowy login lub hasło.")
 
     if not verify_password(payload.password, user.password_hash):
-        log.warning("   złe hasło dla %s", payload.login)
         raise HTTPException(401, "Nieprawidłowy login lub hasło.")
 
     user.fingerprint = payload.fingerprint
@@ -103,10 +99,8 @@ async def login(
     token = new_session_token()
     db.add(SessionModel(token=token, user_id=user.id))
     await db.commit()
-    log.info("   ZALOGOWANO user_id=%s", user.id)
-
-    response.set_cookie(COOKIE_NAME, token, max_age=60 * 60 * 24 * 7, httponly=True, samesite="lax")
-    response.set_cookie(COOKIE_ID_NAME, payload.cookie_id, max_age=60 * 60 * 24 * 365, httponly=True, samesite="lax")
+    response.set_cookie(COOKIE_NAME, token, max_age=60 * 60 * 24 * 7, httponly=True, samesite="lax", secure=COOKIE_SECURE)
+    response.set_cookie(COOKIE_ID_NAME, payload.cookie_id, max_age=60 * 60 * 24 * 365, httponly=False, samesite="lax", secure=COOKIE_SECURE)
     return {"ok": True, "user": {"id": user.id, "login": user.login}}
 
 

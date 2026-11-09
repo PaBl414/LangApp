@@ -34,10 +34,10 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    login: str
-    password: str
-    fingerprint: str
-    cookie_id: str
+    login: str = Field(min_length=3, max_length=64)
+    password: str = Field(min_length=6, max_length=128)
+    fingerprint: str = Field(min_length=8, max_length=128)
+    cookie_id: str = Field(min_length=8, max_length=128)
 
 
 class UserOut(BaseModel):

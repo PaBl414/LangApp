@@ -33,13 +33,10 @@ export async function getFingerprint() {
 }
 
 export function getCookieId() {
-  const name = "langapp_cid=";
-  const parts = document.cookie.split(";").map(c => c.trim());
-  for (const p of parts) {
-    if (p.startsWith(name)) return decodeURIComponent(p.slice(name.length));
-  }
+  const stored = localStorage.getItem("langapp_cid");
+  if (stored) return stored;
   const id = (crypto.randomUUID && crypto.randomUUID()) ||
              (Date.now().toString(36) + Math.random().toString(36).slice(2));
-  document.cookie = `langapp_cid=${encodeURIComponent(id)}; max-age=${60*60*24*365}; path=/; samesite=lax`;
+  localStorage.setItem("langapp_cid", id);
   return id;
 }
