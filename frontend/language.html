@@ -25,18 +25,70 @@
       </div>
     </div>
     <p class="muted" id="lang-native"></p>
+    <p id="language-msg" class="msg" role="status" aria-live="polite">Wczytywanie słów…</p>
+    <button id="language-retry" class="ghost" type="button" hidden>Wczytaj ponownie</button>
 
     <h2 class="section-title">
       Moje słowa (<span id="word-count">0</span>)
     </h2>
 
     <section id="word-list" class="word-list">
-      <p class="empty">Brak słów. Kliknij „+ Dodaj słowo".</p>
+      <p class="empty">Brak słów. Dodaj pierwszą parę w polach poniżej.</p>
     </section>
+
+    <section class="inline-add" aria-labelledby="inline-title">
+      <h2 id="inline-title">Dodaj kolejne słowo</h2>
+      <form id="inline-word-form" class="inline-word-form">
+        <label for="inline-foreign">Słowo w języku obcym
+          <input id="inline-foreign" name="word" type="text" placeholder="np. hello" maxlength="128" required
+            autocomplete="off" autocapitalize="off" spellcheck="false" disabled />
+        </label>
+        <span class="inline-arrow" aria-hidden="true">→</span>
+        <label for="inline-polish">Tłumaczenie polskie
+          <input id="inline-polish" name="translation_pl" type="text" placeholder="np. cześć" maxlength="128" required
+            autocomplete="off" autocapitalize="off" spellcheck="false" disabled />
+        </label>
+        <button id="inline-save" class="primary" type="submit" disabled>Dodaj słowo</button>
+      </form>
+      <p id="inline-msg" class="msg" role="status" aria-live="polite"></p>
+      <div class="inline-footer">
+        <small class="muted">Enter: przejdź do tłumaczenia i dodaj. Słowa zapisujemy bez weryfikacji słownikowej.</small>
+        <button id="btn-advanced-word" class="ghost small" type="button" disabled>Więcej opcji</button>
+      </div>
+    </section>
+
+    <details class="bulk-options">
+      <summary>Wklej wiele słów (opcjonalnie)</summary>
+    <section id="quick-add" class="quick-add" aria-labelledby="quick-title">
+      <h2 id="quick-title">Dodaj słowa jednym wpisem</h2>
+      <p id="quick-help" class="muted">Wpisz parę ze znakiem <strong>=</strong> lub wklej dwie kolumny z arkusza.
+        Każda para w osobnej linii, maksymalnie 100 par.</p>
+      <label for="quick-input">Słowa i polskie tłumaczenia</label>
+      <textarea id="quick-input" rows="3" placeholder="hello = cześć&#10;house = dom&#10;cat = kot"
+        aria-describedby="quick-help quick-verification" autocomplete="off" autocapitalize="off" spellcheck="false" disabled></textarea>
+      <p id="quick-verification" class="muted">Szybki zapis dodaje słowa bez sprawdzania w zewnętrznym słowniku.
+        Przecinki i ukośniki pozostają częścią tłumaczenia.</p>
+      <div id="quick-preview" class="quick-preview" hidden>
+        <h3>Podgląd</h3>
+        <p id="quick-summary" role="status" aria-live="polite"></p>
+        <div class="quick-table-wrap" tabindex="0" role="region" aria-label="Podgląd dodawanych słów">
+          <table class="quick-table">
+            <thead><tr><th scope="col">Wiersz</th><th scope="col">Słowo</th><th scope="col">Tłumaczenie</th><th scope="col">Status</th></tr></thead>
+            <tbody id="quick-rows"></tbody>
+          </table>
+        </div>
+      </div>
+      <p id="quick-msg" class="msg" role="status" aria-live="polite"></p>
+      <div class="quick-actions">
+        <button id="quick-save" class="primary" type="button" disabled>Dodaj słowa</button>
+        <span class="muted">Ctrl + Enter / ⌘ + Enter — zapisz</span>
+      </div>
+    </section>
+    </details>
   </main>
 
-  <!-- Modal: dodawanie słowa -->
-  <div id="modal-word" class="modal hidden">
+  <!-- Formularz zaawansowany i edycja słowa -->
+  <div id="modal-word" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="word-modal-title">
     <div class="modal-box">
       <div class="modal-head">
         <h2 id="word-modal-title">Dodaj słowo</h2>
@@ -57,7 +109,10 @@
           <input type="text" id="w-polish" placeholder="np. cześć" maxlength="128"
                  autocomplete="off" autocapitalize="off" spellcheck="false" />
         </label>
+        <p class="muted">Enter po słowie przechodzi do tłumaczenia. Enter po tłumaczeniu zapisuje i otwiera kolejną parę przy dodawaniu.</p>
 
+        <details id="word-options">
+          <summary>Alternatywne poprawne odpowiedzi</summary>
         <label class="field">
           Inne poprawne tłumaczenia polskie (opcjonalnie)
           <textarea id="w-translation-alternatives" rows="3" placeholder="Jedno tłumaczenie w każdej linii, maksymalnie 10"></textarea>
@@ -67,11 +122,13 @@
           <textarea id="w-word-alternatives" rows="3" placeholder="Jedna forma w każdej linii, maksymalnie 10"></textarea>
         </label>
         <p class="muted">Quiz akceptuje każdą wpisaną wersję. Akcenty i interpunkcja mają znaczenie.</p>
+        </details>
 
         <p id="w-msg" class="msg" role="status" aria-live="polite"></p>
 
         <div class="modal-actions">
           <button id="w-save" class="primary" type="button">Zapisz</button>
+          <button id="w-save-next" class="ghost" type="button">Zapisz i dodaj kolejne</button>
           <button id="w-cancel" class="ghost" type="button">Anuluj</button>
         </div>
       </div>

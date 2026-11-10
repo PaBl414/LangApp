@@ -41,5 +41,5 @@ jobs:
       - name: Check JavaScript syntax
         run: |
           for file in frontend/js/*.js; do node --check "$file"; done
-      - name: Test shared API error handling
-        run: node --test tests/api-client.test.mjs
+      - name: Test API error handling and vocabulary paste parsing
+        run: node --test tests/*.test.mjs

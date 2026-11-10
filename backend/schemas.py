@@ -70,6 +70,15 @@ class AddWordRequest(APIRequest):
     is_valid: bool = Field(default=False, strict=True)
 
 
+class QuickWordRequest(APIRequest):
+    word: WordText
+    translation_pl: WordText
+
+
+class ImportWordsRequest(APIRequest):
+    words: list[QuickWordRequest] = Field(min_length=1, max_length=100)
+
+
 class StudyStartRequest(APIRequest):
     language_id: PositiveId
     mode: Literal["lang_to_pl", "pl_to_lang", "mix"]

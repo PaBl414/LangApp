@@ -17,7 +17,7 @@ DATAMUSE_LANGS = {"en", "es"}
 @router.get("/check")
 async def check_word(
     lang: str = Query(..., min_length=2, max_length=8),
-    word: str = Query(..., min_length=1, max_length=64),
+    word: str = Query(..., min_length=1, max_length=128),
 ):
     """
     Sprawdza istnienie słowa i zwraca sugestie podobnych.

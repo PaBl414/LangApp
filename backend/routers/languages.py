@@ -2,18 +2,39 @@
 Endpointy: lista języków, języki użytkownika.
 """
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..models import Language, UserLanguage, User, UserWord, StudySession, StudyAnswer, Progress, WordReview
-from ..schemas import AddLanguageRequest, AddWordRequest
-from ..grading import accepted_variants, clean_text
+from ..schemas import AddLanguageRequest, AddWordRequest, ImportWordsRequest
+from ..grading import accepted_variants, clean_text, normalize_answer
 from ..reviews import word_signature
 from .learning import current_user
 
 router = APIRouter(prefix="/api", tags=["languages"])
+
+
+async def lock_vocabulary(db: AsyncSession, user_id: int, language_id: int) -> None:
+    """Serialize vocabulary writers on the owned membership before reading words.
+
+    A no-op UPDATE acquires SQLite's write lock (or the row lock on other DBs).
+    This also makes retries of imports safe without a vocabulary schema change.
+    """
+    result = await db.execute(update(UserLanguage).where(
+        UserLanguage.user_id == user_id, UserLanguage.language_id == language_id,
+    ).values(language_id=language_id))
+    if not result.rowcount:
+        raise HTTPException(404, "Ten język nie jest dodany do Twojego profilu.")
+
+
+async def duplicate_word(db: AsyncSession, user_id: int, language_id: int, primary: str, exclude_id: int | None = None) -> bool:
+    rows = (await db.execute(select(UserWord.id, UserWord.word).where(
+        UserWord.user_id == user_id, UserWord.language_id == language_id,
+    ))).all()
+    key = normalize_answer(primary)
+    return any(row.id != exclude_id and normalize_answer(row.word) == key for row in rows)
 
 
 @router.get("/languages")
@@ -185,24 +206,9 @@ async def add_word(
     translation = clean_text(payload.translation_pl)
     is_valid = payload.is_valid
 
-    ul = (await db.execute(
-        select(UserLanguage).where(
-            UserLanguage.user_id == user.id,
-            UserLanguage.language_id == language_id,
-        )
-    )).scalar_one_or_none()
-    if not ul:
-        raise HTTPException(404, "Ten język nie jest dodany do Twojego profilu.")
+    await lock_vocabulary(db, user.id, language_id)
 
-    # Unikalność: to samo słowo w tym samym języku u tego samego użytkownika
-    existing = (await db.execute(
-        select(UserWord).where(
-            UserWord.user_id == user.id,
-            UserWord.language_id == language_id,
-            UserWord.word == word,
-        )
-    )).scalar_one_or_none()
-    if existing:
+    if await duplicate_word(db, user.id, language_id, word):
         raise HTTPException(409, "To słowo już istnieje w tym języku.")
 
     w = UserWord(
@@ -221,6 +227,57 @@ async def add_word(
         "ok": True,
         "word": word_response(w),
     }
+
+
+@router.post("/user/languages/{language_id}/words/import")
+async def import_words(
+    language_id: int,
+    payload: ImportWordsRequest,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Import up to 100 pairs atomically; identical pairs are safe to retry.
+
+    Quick entry never claims external dictionary verification. Existing aliases,
+    spelling, verification flags and review state are preserved on duplicates.
+    Conflicting translations reject the entire batch without overwriting data.
+    """
+    await lock_vocabulary(db, user.id, language_id)
+    existing = (await db.execute(select(UserWord).where(
+        UserWord.user_id == user.id, UserWord.language_id == language_id,
+    ))).scalars().all()
+    by_word: dict[str, list[UserWord]] = {}
+    for entry in existing:
+        by_word.setdefault(normalize_answer(entry.word), []).append(entry)
+
+    added, skipped, selected = [], 0, {}
+    for index, entry in enumerate(payload.words, start=1):
+        word, translation = clean_text(entry.word), clean_text(entry.translation_pl)
+        # WordText rejects blanks before normalization; enforce again for callers
+        # whose whitespace becomes empty after clean_text.
+        if not word or not translation:
+            raise HTTPException(422, f"Pozycja {index}: uzupełnij słowo i tłumaczenie.")
+        key = normalize_answer(word)
+        candidates = by_word.get(key, [])
+        if candidates:
+            if any(normalize_answer(item.translation_pl) != normalize_answer(translation) for item in candidates):
+                raise HTTPException(409, f"Pozycja {index}: słowo „{word}” ma już inne tłumaczenie. Popraw listę lub użyj Edytuj. Nie zapisano żadnych nowych słów.")
+            skipped += 1
+            selected[key] = candidates[0]
+            continue
+        item = UserWord(
+            user_id=user.id, language_id=language_id, word=word,
+            translation_pl=translation, translation_alternatives=[],
+            word_alternatives=[], is_valid=False,
+        )
+        by_word[key] = [item]
+        selected[key] = item
+        added.append(item)
+
+    db.add_all(added)
+    await db.commit()
+    return {"ok": True, "added": len(added), "skipped": skipped,
+            "words": [word_response(word) for word in selected.values()]}
 
 
 def word_response(word: UserWord):
@@ -243,12 +300,10 @@ async def update_word(
     ))).scalar_one_or_none()
     if not word:
         raise HTTPException(404, "Nie znaleziono słowa.")
+    await lock_vocabulary(db, user.id, word.language_id)
+    await db.refresh(word)
     primary = clean_text(payload.word)
-    duplicate = (await db.execute(select(UserWord.id).where(
-        UserWord.user_id == user.id, UserWord.language_id == word.language_id,
-        UserWord.word == primary, UserWord.id != word.id,
-    ).limit(1))).scalar_one_or_none()
-    if duplicate:
+    if await duplicate_word(db, user.id, word.language_id, primary, exclude_id=word.id):
         raise HTTPException(409, "To słowo już istnieje w tym języku.")
     previous_signature = word_signature(word)
     word.word = primary

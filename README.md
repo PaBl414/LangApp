@@ -9,6 +9,8 @@ LangApp is a small Polish-language vocabulary learning app. It provides account 
 - Account registration and cookie-based login sessions.
 - A catalog of languages seeded from `backend/seed_languages.py`.
 - User-owned language and vocabulary lists.
+- An always-visible vocabulary entry row below the word list, with separate foreign-word and Polish-translation fields.
+- Optional pasted spreadsheet columns, live preview and atomic duplicate-safe batch saving.
 - Quiz sessions in either translation direction or mixed mode.
 - Resumable quizzes with automatic drafts, local recovery and safe submission retries.
 - Editable vocabulary with explicit accepted alternatives in both translation directions.
@@ -100,9 +102,82 @@ The app serves its frontend and API from the same origin. Main route groups:
 - `GET /api/study/active?language_id=...`, `GET /api/study/sessions/{id}`
 - `PUT /api/study/sessions/{id}/draft`, `POST /api/study/submit`
 - `PUT /api/words/{id}` for editing vocabulary and accepted alternatives
+- `POST /api/user/languages/{language_id}/words/import` for atomic quick entry (1–100 pairs)
 - `GET /api/dictionary/check`
 
 Use `/docs` while the local server is running for the complete generated OpenAPI schema and request models.
+
+## Quick vocabulary entry
+
+The language page always shows **Dodaj kolejne słowo** directly below all saved
+words: a foreign-word field, a separate Polish-translation field and a
+**Dodaj słowo** button. The row remains visible after saving; no dialog is needed.
+New words appear at the end of the list, immediately above this row.
+
+- Type the foreign word, press **Enter** or **Tab** to move to the translation,
+  then press **Enter** or click **Dodaj słowo** to save.
+- After a successful save, both fields clear and focus returns to the
+  foreign-word field. A failed save preserves both fields for correction or retry.
+- Empty fields are rejected. Identical pairs are skipped; a different primary
+  translation for an existing word is a conflict and can be changed with **Edytuj**.
+- This row uses the same atomic, duplicate-safe endpoint as batch entry. Words
+  are stored as unverified without waiting for a third-party dictionary.
+- **Więcej opcji** opens the editor with dictionary lookup and optional accepted
+  alternatives. The header's **+ Dodaj słowo** button focuses the always-visible row.
+
+For optional bulk entry, expand **Wklej wiele słów (opcjonalnie)** below the row.
+Use **Dodaj słowa jednym wpisem** to paste one pair per line:
+
+```text
+hello = cześć
+house = dom
+cat = kot
+```
+
+You can also copy two columns from a spreadsheet: foreign word first, Polish
+translation second. The pasted tab separates the columns. This is a plain-text
+paste format, not a CSV file importer; quoted fields with embedded newlines or
+tabs are not supported. Each line must contain exactly one `=` or one tab
+(a tab-separated translation can itself contain `=`). Commas and slashes remain
+literal text and do not create accepted alternatives.
+
+- The live preview shows the original line numbers, new entries, identical pairs
+  to skip, and invalid or conflicting entries. Fix errors directly in the text.
+  Blank lines are ignored; each side allows 1–128 Unicode characters after
+  whitespace cleanup, with up to 100 pairs per request.
+- Click **Dodaj słowa** or use **Ctrl+Enter** (macOS: **⌘+Enter**). Enter alone
+  starts a new line. After success, the list updates immediately and focus
+  returns to the empty input for the next entries.
+- The server validates the entire batch and saves it in one transaction. An
+  existing word with a different primary translation rejects the entire batch;
+  use **Edytuj** to intentionally change it or add accepted alternatives.
+- Identical pairs are skipped, including repetitions in the pasted text.
+  Server duplicate matching uses the same Unicode NFC, case folding and
+  whitespace cleanup as answer grading. The browser preview is a convenience;
+  the server repeats validation against current data, including changes from
+  other tabs. Existing spellings, alternatives, verification flags and review
+  state are preserved when a duplicate is skipped.
+- The input stays intact after an error. If a save response is lost, retrying
+  the same list safely skips pairs already saved. Simultaneous imports and
+  single-word additions serialize on the owned language membership.
+- Leaving the page with an unsaved list requests the browser's standard discard
+  confirmation. Explicit logout asks before discarding the list and clears it
+  only after successful logout. Quick-entry text is not stored in browser storage;
+  it does not survive closing or reloading the page after confirming the discard.
+- Quick entry adds words as **unverified** without contacting a third-party
+  dictionary or claiming to validate translations. This keeps large pastes fast
+  and available when external services are unavailable. The warning badge means
+  “not verified”, not “incorrect”; unverified words are available in quizzes.
+- **Więcej opcji** retains the single-word dictionary check and optional
+  accepted alternatives, collapsed until needed. **Zapisz i dodaj kolejne** keeps
+  the editor open. Enter in the foreign-word field moves to the translation;
+  Enter in the translation saves and opens the next pair when adding, or saves
+  and closes when editing. Escape closes the editor when no save is in progress.
+
+The batch endpoint accepts `{"words": [{"word": "hello", "translation_pl": "cześć"}]}`
+and returns `added`, `skipped` and the resulting unique `words`. It rejects unknown
+fields, including client-provided verification flags. It requires authentication
+and a language belonging to that account. This feature needs no database upgrade.
 
 ## Quiz recovery and answer grading
 
@@ -212,7 +287,9 @@ refreshes also discard stale responses to prevent deleted data reappearing.
 GitHub Actions runs on pushes and pull requests with read-only repository
 permissions. It installs dependencies, runs `pip check`, compiles Python files
 and runs isolated regression tests on **Python 3.11 and 3.12**. A separate
-**Node.js 24** job checks JavaScript syntax and tests shared API error handling.
+**Node.js 24** job checks JavaScript syntax, shared API error handling and
+vocabulary paste parsing. API regressions also cover atomic imports, retry safety,
+concurrent writers, ownership and preserving review state when skipping duplicates.
 Action versions are pinned by commit SHA. CI results become available after
 the workflow is pushed to GitHub; configuring it locally does not run remote CI.
 
@@ -224,10 +301,10 @@ python -m compileall -q backend migrations tests
 python -m unittest discover -s tests -v
 ```
 
-With Node.js 24 installed, run the dependency-free API client tests:
+With Node.js 24 installed, run the dependency-free frontend tests:
 
 ```sh
-node --test tests/api-client.test.mjs
+node --test tests/*.test.mjs
 ```
 
 Node.js is only needed for developer checks, not to serve the application. The
