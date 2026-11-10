@@ -8,7 +8,7 @@
 </head>
 <body>
   <header class="topbar">
-    <a href="/dashboard" class="brand small" style="text-decoration:none;">← LangApp</a>
+    <a href="/dashboard" class="brand small">← LangApp</a>
     <button id="logout" class="ghost">Wyloguj</button>
   </header>
 
@@ -17,14 +17,19 @@
 
     <!-- EKRAN 1: KONFIGURACJA -->
     <section id="screen-config" class="study-screen">
-      <h1>Rozpocznij naukę</h1>
+      <p class="eyebrow">Zrób kolejny mały krok</p>
+      <h1>Czas na Twój język</h1>
       <p class="muted" id="cfg-lang">Język: …</p>
+      <a id="study-words-link" class="text-link" href="/dashboard">Otwórz słownik →</a>
       <div id="resume-panel" hidden>
         <label for="resume-session">Niedokończone quizy</label>
         <select id="resume-session"></select>
         <button id="btn-resume" class="ghost" type="button">Wznów wybrany quiz</button>
       </div>
 
+      <div class="quiz-config-card">
+      <div class="section-heading"><h2>Quiz z zapisem postępu</h2><span class="pill">Twoje powtórki</span></div>
+      <div class="config-grid">
       <div class="form-row">
         <label>Zakres nauki
           <select id="cfg-source">
@@ -36,7 +41,7 @@
       </div>
 
       <div class="form-row">
-        <label>Tryb
+        <label>Kierunek tłumaczenia
           <select id="cfg-mode">
             <option value="lang_to_pl">Z języka obcego → polski</option>
             <option value="pl_to_lang">Z polskiego → język obcy</option>
@@ -44,9 +49,10 @@
           </select>
         </label>
       </div>
+      </div>
 
       <div class="form-row">
-        <label>Liczba słów
+        <label>Maksymalna liczba słów
           <input type="number" id="cfg-count" min="1" max="50" value="10" />
         </label>
       </div>
@@ -54,6 +60,31 @@
       <button id="btn-start" class="primary big" disabled>Rozpocznij nowy quiz</button>
       <button id="btn-retry-load" class="ghost" type="button" hidden>Ponów wczytywanie</button>
       <p id="cfg-msg" class="msg" role="status" aria-live="polite"></p>
+      <p id="cfg-availability" class="muted"></p>
+      </div>
+
+      <section class="practice-picker" aria-labelledby="practice-picker-title">
+        <h2 id="practice-picker-title">Wolisz zacząć od rozgrzewki?</h2>
+        <p class="muted">Ćwiczenia bez ocen. Odkrywaj odpowiedzi i łącz słowa we własnym tempie.</p>
+        <div class="practice-choices">
+          <button id="btn-flashcards" class="exercise-choice" type="button" disabled><span class="exercise-symbol" aria-hidden="true">↔</span><strong>Fiszki</strong><span>Odsłoń tłumaczenie i sprawdź, co pamiętasz.</span></button>
+          <button id="btn-matching" class="exercise-choice" type="button" disabled><span class="exercise-symbol" aria-hidden="true">⇄</span><strong>Połącz pary</strong><span>Znajdź słowa, które do siebie pasują.</span></button>
+        </div>
+      </section>
+    </section>
+
+    <section id="screen-practice" class="study-screen hidden">
+      <div class="section-heading"><div><p class="eyebrow">Rozgrzewka bez ocen</p><h1 id="practice-title">Fiszki</h1></div><button id="practice-close" class="ghost" type="button">Wróć</button></div>
+      <div class="practice-toolbar"><label>Kierunek<select id="practice-direction"><option value="lang_to_pl">Obcy → polski</option><option value="pl_to_lang">Polski → obcy</option></select></label><button id="practice-switch" class="ghost" type="button">Zmień ćwiczenie</button></div>
+      <p id="practice-count" class="muted" role="status" aria-live="polite"></p>
+      <div id="practice-cards">
+        <button id="practice-card" class="practice-flashcard" type="button" aria-pressed="false"><span id="practice-card-side" class="eyebrow"></span><strong id="practice-card-text"></strong><span id="practice-card-hint" class="muted"></span></button>
+        <p id="practice-card-extra" class="muted"></p>
+        <div class="practice-navigation"><button id="practice-previous" class="ghost" type="button">← Poprzednia</button><button id="practice-shuffle" class="ghost" type="button">Potasuj</button><button id="practice-next" class="primary" type="button">Następna →</button></div>
+      </div>
+      <div id="practice-matching" hidden><div id="practice-pairs" class="practice-pairs"></div><button id="practice-new-round" class="primary big" type="button">Kolejna runda →</button></div>
+      <p id="practice-feedback" class="msg" role="status" aria-live="polite"></p>
+      <p class="practice-note muted">Ta rozgrzewka nie zmienia wyników ani terminów powtórek. Aby zapisać postęp, ukończ quiz.</p>
     </section>
 
     <!-- EKRAN 2: QUIZ -->
@@ -62,7 +93,8 @@
         <span id="quiz-progress">Pytanie 1 / 10</span>
         <span id="quiz-mode" class="muted"></span>
       </div>
-      <div class="progress-bar"><div id="progress-fill"></div></div>
+      <div class="progress-bar" id="quiz-progress-bar" role="progressbar" aria-label="Uzupełnione odpowiedzi" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="progress-fill"></div></div>
+      <p id="quiz-completed" class="muted"></p>
 
       <div class="quiz-prompt">
         <p class="muted" id="quiz-direction"></p>
@@ -80,19 +112,24 @@
       </div>
       <p id="quiz-save-status" class="msg" role="status" aria-live="polite"></p>
       <p id="quiz-feedback" class="msg" role="status" aria-live="polite"></p>
+      <details class="disclosure question-navigation"><summary>Przejdź do pytania</summary><div id="quiz-map" class="question-map" role="group" aria-label="Pytania quizu"></div></details>
+      <p class="muted keyboard-hint">Enter — następne pytanie. Możesz wracać i poprawiać odpowiedzi przed zakończeniem.</p>
     </section>
 
     <!-- EKRAN 3: WYNIK -->
     <section id="screen-result" class="study-screen hidden">
       <h1 id="res-title">Wynik</h1>
-      <p class="res-score"><span id="res-correct">0</span> / <span id="res-total">0</span>
+      <div class="result-medallion"><p class="res-score"><span id="res-correct">0</span> / <span id="res-total">0</span>
          (<span id="res-percent">0</span>%)</p>
+      <p id="res-message" class="muted"></p></div>
 
-      <h2 class="section-title">Szczegóły</h2>
+      <button id="btn-practice-mistakes" class="ghost" type="button" hidden>Przećwicz błędne odpowiedzi na fiszkach</button>
+      <details class="disclosure result-details"><summary>Szczegóły odpowiedzi</summary>
       <div id="res-list" class="res-list"></div>
+      </details>
 
       <div class="res-actions">
-        <a href="/dashboard" class="ghost" style="text-decoration:none; padding:10px 18px;">Panel</a>
+        <a href="/dashboard" class="ghost">Wróć do panelu</a>
         <button id="btn-again" class="primary">Jeszcze raz</button>
       </div>
     </section>

@@ -1,4 +1,6 @@
 import { request } from "./api-client.js";
+import { continueTarget, wordCount } from "./learning-ui.js";
+import { confirmAction, notify } from "./ui.js";
 
 const $ = id => document.getElementById(id);
 const modes = {lang_to_pl: "obcy → PL", pl_to_lang: "PL → obcy", mix: "mix"};
@@ -30,7 +32,7 @@ function renderDue(groups, summary) {
   $("due-count").textContent = `(${summary.due_reviews})`;
   $("due-list").replaceChildren();
   if (!groups.length) {
-    $("due-list").append(node("p", "empty", summary.practiced_words ? "Na dziś nie ma zaległych powtórek. Możesz rozpocząć zwykły quiz poniżej." : "Ukończ pierwszy quiz. Na podstawie odpowiedzi zaplanujemy powtórki."));
+    $("due-list").append(node("p", "empty", summary.practiced_words ? "Na dziś wszystko powtórzone. Kolejny quiz rozpoczniesz z karty języka." : "Ukończ pierwszy quiz. Na podstawie odpowiedzi zaplanujemy powtórki."));
   }
   for (const group of groups) {
     const row = node("article", "learning-row");
@@ -78,15 +80,19 @@ function renderLanguages(languages) {
     remove.type = "button";
     remove.setAttribute("aria-label", `Usuń język ${language.name_pl}`);
     remove.addEventListener("click", async () => {
-      if (!confirm("Usunąć język wraz ze słowami, historią quizów i postępem? Tej operacji nie można cofnąć.")) return;
       remove.disabled = true;
       try {
+        if (!await confirmAction({title: `Usunąć język ${language.name_pl}?`, message: "Usuniesz jego słowa, historię i postęp. Tej operacji nie można cofnąć.", label: "Usuń język"})) return;
         await request(`/api/user/languages/${language.user_language_id}`, "DELETE");
         await loadDashboard();
+        notify("Język został usunięty.");
       } catch (error) { report("dashboard-status", error); }
-      finally { remove.disabled = false; }
+      finally { remove.disabled = false; if (remove.isConnected) remove.focus(); else $("btn-add-language").focus(); }
     });
-    tile.append(open, node("p", "muted", language.name_native), node("p", "", `Przećwiczone słowa: ${language.practiced_words}/${language.total_words}`), node("p", "muted", `Quizy: ${language.quizzes} · poprawność: ${percent(language.accuracy)}`), remove);
+    const header = node("div", "tile-heading"); header.append(open, remove);
+    const actions = node("div", "tile-actions");
+    actions.append(link("Otwórz słowa", `/language?id=${language.id}`), link("Ćwicz", `/study?id=${language.id}`));
+    tile.append(header, node("p", "muted", language.name_native), node("p", "tile-word-count", wordCount(language.total_words)), node("p", "muted", `Przećwiczone: ${language.practiced_words} · poprawność: ${percent(language.accuracy)}`), actions);
     $("my-languages").append(tile);
   }
 }
@@ -104,20 +110,27 @@ async function loadDashboard() {
     $("stat-accuracy").textContent = percent(data.summary.accuracy);
     $("stat-answers").textContent = `${data.summary.correct}/${data.summary.answers} odpowiedzi`;
     $("stat-streak").textContent = data.summary.streak;
-    $("learning-day").textContent = `Dzień nauki: ${data.today} · strefa ${data.timezone}. Każdy kierunek tłumaczenia ma osobny termin.`;
+    $("learning-day").textContent = "Twój plan na " + new Intl.DateTimeFormat("pl-PL", {day: "numeric", month: "long", timeZone: "UTC"}).format(new Date(data.today + "T12:00:00Z"));
     renderDue(data.due, data.summary); renderDifficult(data.difficult); renderLanguages(data.languages);
+    const next = continueTarget(data);
+    $("continue-heading").textContent = next.title;
+    $("continue-description").textContent = next.detail;
+    $("continue-learning").hidden = !next.href;
+    $("continue-onboarding").hidden = !!next.href;
+    if (next.href) { $("continue-learning").href = next.href; $("continue-learning").textContent = next.label + " →"; }
     historyIds.clear(); $("history-list").replaceChildren();
     appendHistory(data.history.items);
     if (!data.history.items.length) $("history-list").append(node("p", "empty", "Nie masz jeszcze ukończonych quizów."));
     nextOffset = data.history.next_offset; historyButton();
     status("history-status", "");
-    status("dashboard-status", "Postęp zaktualizowany. Uwzględniamy tylko ukończone quizy.");
+    status("dashboard-status", "");
     $("dashboard-login").hidden = true;
   } catch (error) { if (current === version) report("dashboard-status", error); }
   finally { if (current === version) $("btn-refresh").disabled = false; }
 }
 
 $("btn-refresh").addEventListener("click", loadDashboard);
+$("continue-onboarding").addEventListener("click", () => $("btn-add-language").click());
 $("btn-history-more").addEventListener("click", async () => {
   if (historyBusy || nextOffset === null) return;
   const current = version, offset = nextOffset;
@@ -162,7 +175,7 @@ function renderLanguageChoices() {
       try {
         try { await request("/api/user/languages", "POST", {language_id: language.id}); }
         catch (error) { if (error.status !== 409) throw error; }
-        languageBusy = false; closeModal(); await loadDashboard();
+        languageBusy = false; closeModal(); await loadDashboard(); notify(`Dodano język: ${language.name_pl}.`);
       } catch (error) { report("modal-lang-msg", error); }
       finally { languageBusy = false; renderLanguageChoices(); }
     });

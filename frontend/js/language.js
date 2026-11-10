@@ -1,6 +1,8 @@
 import { request } from "./api-client.js";
 import { previewWords, cleanWordText } from "./quick-words.js";
 import { createWordChecker, readDictionaryPreference, saveDictionaryPreference, DICTIONARY_PREFERENCE } from "./dictionary.js";
+import { filterVocabulary } from "./learning-ui.js";
+import { confirmAction, notify } from "./ui.js";
 
 /**
  * language.js — widok pojedynczego języka.
@@ -26,7 +28,7 @@ let loadVersion = 0;
 // === 2. Wylogowanie ===
 document.getElementById("logout").addEventListener("click", async () => {
   if (savingQuick || savingWord || savingInline) return;
-  if (hasUnsavedWords() && !confirm("Masz niezapisane słowa. Wylogować i odrzucić wpisane dane?")) return;
+  if (hasUnsavedWords() && !await confirmAction({title: "Odrzucić niezapisane słowa?", message: "Wylogowanie usunie wpisane dane z tej strony.", label: "Wyloguj"})) return;
   try {
     await request("/api/auth/logout", "POST");
     quickInput.value = "";
@@ -34,7 +36,7 @@ document.getElementById("logout").addEventListener("click", async () => {
     inlinePolish.value = "";
     window.location.href = "/";
   }
-  catch (error) { alert(error.message); }
+  catch (error) { notify(error.message, "error"); }
 });
 
 // === 3. Ładowanie języka i słów ===
@@ -59,27 +61,27 @@ async function loadAll() {
 
 function renderWords(words) {
   WORDS = words;
+  const visible = filterVocabulary(words, document.getElementById("word-search").value);
+  document.getElementById("word-visible").textContent = `Widoczne: ${visible.length} z ${words.length}`;
   document.getElementById("word-count").textContent = words.length;
   const el = document.getElementById("word-list");
 
-  if (!words.length) {
-    el.innerHTML = `<p class="empty">Brak słów. Dodaj pierwszą parę w polach poniżej.</p>`;
+  if (!visible.length) {
+    el.innerHTML = words.length ? `<p class="empty">Nie znaleziono słów. Zmień lub wyczyść wyszukiwanie.</p>` : `<p class="empty">Twój słownik czeka na pierwsze słowo. Dodaj je poniżej.</p>`;
     refreshQuickPreview();
     return;
   }
 
   el.innerHTML = "";
-  words.forEach(w => {
+  visible.forEach(w => {
     const div = document.createElement("div");
     div.className = "word-row";
+    div.setAttribute("role", "listitem");
     div.innerHTML = `
-      <div class="word-cell">
-        <b>${escapeHtml(w.word)}</b>
-        <span class="muted"> → </span>
-        <span>${escapeHtml(w.translation_pl)}</span>
-        ${(w.translation_alternatives || []).length ? `<small class="muted"> (również: ${w.translation_alternatives.map(escapeHtml).join("; ")})</small>` : ""}
-        ${(w.word_alternatives || []).length ? `<small class="muted"> (inne formy: ${w.word_alternatives.map(escapeHtml).join("; ")})</small>` : ""}
-      </div>
+      <div class="word-cell word-foreign"><b>${escapeHtml(w.word)}</b>
+        ${(w.word_alternatives || []).length ? `<small class="muted">${w.word_alternatives.map(escapeHtml).join(" · ")}</small>` : ""}</div>
+      <div class="word-cell word-polish"><span>${escapeHtml(w.translation_pl)}</span>
+        ${(w.translation_alternatives || []).length ? `<small class="muted">${w.translation_alternatives.map(escapeHtml).join(" · ")}</small>` : ""}</div>
       <div class="word-actions">
         <button class="ghost small" type="button" data-edit="${w.id}">Edytuj</button>
         <button class="ghost small danger" type="button" data-id="${w.id}">Usuń</button>
@@ -95,13 +97,16 @@ function renderWords(words) {
   el.querySelectorAll("button[data-id]").forEach(btn => {
     btn.addEventListener("click", async () => {
       if (savingQuick || savingWord || savingInline) return;
-      if (!confirm("Usunąć to słowo?")) return;
+      btn.disabled = true;
       try {
+        if (!await confirmAction({title: "Usunąć słowo?", message: "Usuniesz słowo i jego terminy powtórek. Wyniki ukończonych quizów pozostaną w historii.", label: "Usuń słowo"})) return;
         await request(`/api/words/${btn.dataset.id}`, "DELETE");
-        await loadAll();
+        loadVersion += 1;
+        renderWords(WORDS.filter(word => word.id !== Number(btn.dataset.id)));
+        notify("Słowo zostało usunięte.");
       } catch (error) {
-        alert(error.message);
-      }
+        notify(error.message, "error");
+      } finally { btn.disabled = false; if (btn.isConnected) btn.focus(); else inlineForeign.focus(); }
     });
   });
   refreshQuickPreview();
@@ -110,6 +115,7 @@ function renderWords(words) {
 function mergeWords(words) {
   // A successful write takes precedence over an earlier list refresh.
   loadVersion += 1;
+  document.getElementById("word-search").value = "";
   const byId = new Map(WORDS.map(word => [word.id, word]));
   words.forEach(word => byId.set(word.id, { ...byId.get(word.id), ...word }));
   renderWords([...byId.values()]);
@@ -303,7 +309,7 @@ function closeModal() {
   modalChecker.invalidate();
   modal.classList.add("hidden");
   if (editorOpener?.isConnected) editorOpener.focus();
-  else quickInput.focus();
+  else inlineForeign.focus();
 }
 document.getElementById("modal-word-close").addEventListener("click", closeModal);
 document.getElementById("w-cancel").addEventListener("click", closeModal);
@@ -363,6 +369,7 @@ async function saveWord(keepOpen = false) {
       msg.className = "msg ok";
       msg.textContent = `Dodano „${word}”. Wpisz kolejne słowo.`;
     } else closeModal();
+    notify(edited ? "Zapisano zmiany słowa." : "Dodano słowo.");
   } catch (error) {
     msg.classList.add("error");
     msg.textContent = error.message + " Wpisane dane zachowano w formularzu.";
@@ -439,5 +446,6 @@ async function refreshLanguage() {
   } finally { retry.disabled = false; }
 }
 document.getElementById("language-retry").addEventListener("click", refreshLanguage);
+document.getElementById("word-search").addEventListener("input", () => renderWords(WORDS));
 refreshLanguage();
 loadDictionaryConfiguration();

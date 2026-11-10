@@ -48,6 +48,19 @@ class CalendarTests(unittest.TestCase):
 
 
 class ProgressTests(APITestCase):
+    async def test_dashboard_offers_only_owned_unfinished_session_without_answers(self):
+        _, words, quiz = await self.setup_quiz()
+        data = await self.dashboard()
+        self.assertEqual(data["active_session"], {"session_id": quiz["session_id"], "language_id": 1, "current_index": 0, "total": 4})
+        await self.finish(words, quiz)
+        self.assertIsNone((await self.dashboard())["active_session"])
+
+    async def test_dashboard_continue_never_exposes_another_accounts_draft(self):
+        await self.setup_quiz()
+        self.client.cookies.clear()
+        await self.register("second")
+        self.assertIsNone((await self.dashboard())["active_session"])
+
     async def test_dashboard_requires_authentication(self):
         self.assertEqual((await self.client.get("/api/dashboard")).status_code, 401)
         self.assertEqual((await self.client.get("/api/dashboard/history")).status_code, 401)

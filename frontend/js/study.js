@@ -1,4 +1,7 @@
 import { APIError, request } from "./api-client.js";
+import { createPractice } from "./practice.js";
+import { wordCount } from "./learning-ui.js";
+import { confirmAction } from "./ui.js";
 
 const params = new URLSearchParams(window.location.search);
 const LANGUAGE_ID = Number(params.get("id"));
@@ -8,6 +11,7 @@ let userId = null, session = null, answers = [], currentIdx = 0, baseRevision = 
 let dirty = false, syncPromise = null, saveTimer = null, pendingSave = null;
 let submitting = false, conflict = false, booting = false, starting = false, localSaved = false;
 let pendingStartMemory = null;
+let vocabularyWords = [], vocabularyReady = false, mistakeWords = [], practiceReturn = "config";
 
 function message(id, text, error = false) {
   $(id).textContent = text;
@@ -47,7 +51,7 @@ function setSessionURL(id) {
   history.replaceState(null, "", url);
 }
 function screen(name) {
-  for (const value of ["config", "quiz", "result"]) $("screen-" + value).classList.toggle("hidden", value !== name);
+  for (const value of ["config", "quiz", "result", "practice"]) $("screen-" + value).classList.toggle("hidden", value !== name);
 }
 function buttons() {
   $("btn-previous").disabled = submitting || conflict || currentIdx === 0;
@@ -57,11 +61,37 @@ function buttons() {
   $("quiz-answer").disabled = submitting;
   $("quiz-answer").readOnly = conflict;
   $("btn-next").textContent = submitting ? "Wysyłanie…" : currentIdx === session?.total - 1 ? "Zakończ quiz" : "Następne pytanie";
+  updateQuizProgress();
+}
+function updateQuizProgress() {
+  if (!session || session.finished) return;
+  const filled = answers.filter(answer => answer.given.trim()).length;
+  const percentage = Math.round(filled / session.total * 100);
+  $("progress-fill").style.width = `${percentage}%`;
+  $("quiz-progress-bar").setAttribute("aria-valuenow", percentage);
+  $("quiz-completed").textContent = `Uzupełniono ${filled} z ${session.total} odpowiedzi`;
+  if ($("quiz-map").children.length !== session.total) {
+    $("quiz-map").replaceChildren();
+    session.questions.forEach((question, index) => {
+      const button = document.createElement("button"); button.type = "button"; button.textContent = index + 1;
+      button.addEventListener("click", () => goToQuestion(index)); $("quiz-map").append(button);
+    });
+  }
+  [...$("quiz-map").children].forEach((button, index) => {
+    button.disabled = submitting || conflict;
+    button.classList.toggle("answered", !!answers[index].given.trim());
+    button.classList.toggle("current", index === currentIdx);
+    button.setAttribute("aria-label", `Pytanie ${index + 1}${answers[index].given.trim() ? ", odpowiedź wpisana" : ", brak odpowiedzi"}`);
+    if (index === currentIdx) button.setAttribute("aria-current", "step"); else button.removeAttribute("aria-current");
+  });
+}
+function goToQuestion(index) {
+  if (submitting || conflict || !session || index === currentIdx || index < 0 || index >= session.total) return;
+  captureInput(); currentIdx = index; changed(); renderQuestion();
 }
 function renderQuestion() {
   const question = session.questions[currentIdx];
   $("quiz-progress").textContent = `Pytanie ${currentIdx + 1} / ${session.total}`;
-  $("progress-fill").style.width = `${currentIdx / session.total * 100}%`;
   $("quiz-mode").textContent = modeNames[session.mode] + (session.source === "due" ? " · powtórka" : "");
   $("quiz-direction").textContent = question.direction === "lang_to_pl" ? "Przetłumacz na polski:" : "Przetłumacz na język obcy:";
   $("quiz-word").textContent = question.prompt;
@@ -180,6 +210,14 @@ function showResult(data) {
   $("res-correct").textContent = data.correct;
   $("res-percent").textContent = data.percent;
   $("res-title").textContent = data.percent >= 80 ? "Świetnie!" : data.percent >= 50 ? "Dobrze, idziesz dalej." : "Jeszcze trochę powtórek.";
+  $("res-message").textContent = data.correct === data.total ? "Wszystkie odpowiedzi poprawne. Powtórki są już zaplanowane." : "Postęp zapisany. Wróć do trudniejszych słów na fiszkach.";
+  mistakeWords = data.results.filter(result => !result.is_correct).map((result, index) => ({
+    id: index, word: result.direction === "pl_to_lang" ? result.expected : result.prompt,
+    translation_pl: result.direction === "pl_to_lang" ? result.prompt : result.expected,
+    translation_alternatives: result.direction === "pl_to_lang" ? [] : (result.accepted_answers || []).slice(1),
+    word_alternatives: result.direction === "pl_to_lang" ? (result.accepted_answers || []).slice(1) : [],
+  }));
+  $("btn-practice-mistakes").hidden = !mistakeWords.length;
   $("res-list").replaceChildren();
   for (const result of data.results) {
     const row = document.createElement("div");
@@ -211,7 +249,7 @@ async function startQuiz() {
     const data = await request("/api/study/start", "POST", {language_id: LANGUAGE_ID, mode: pending.mode, count: pending.count, source: pending.source, request_id: pending.request_id});
     adoptSession(data); removeStorage(startKey()); pendingStartMemory = null;
   } catch (error) { report("cfg-msg", error); }
-  finally { starting = false; $("btn-start").disabled = false; }
+  finally { starting = false; updateSource(); }
 }
 async function loadSession(id, discardLocal = false) {
   const data = await request(`/api/study/sessions/${id}`);
@@ -220,12 +258,17 @@ async function loadSession(id, discardLocal = false) {
 async function initialize() {
   if (booting) return;
   booting = true; $("btn-start").disabled = true; $("btn-retry-load").hidden = true;
+  message("cfg-msg", "Wczytywanie słów i postępu…");
+  let loaded = false;
   try {
     const [me, vocabulary, active] = await Promise.all([
       request("/api/me"), request(`/api/user/languages/${LANGUAGE_ID}/words`), request(`/api/study/active?language_id=${LANGUAGE_ID}`),
     ]);
     userId = me.id;
-    $("cfg-lang").textContent = `${vocabulary.language.flag} ${vocabulary.language.name_pl} — masz ${vocabulary.words.length} słów`;
+    message("cfg-msg", "");
+    vocabularyWords = vocabulary.words; vocabularyReady = true;
+    $("study-words-link").href = `/language?id=${LANGUAGE_ID}`;
+    $("cfg-lang").textContent = `${vocabulary.language.flag} ${vocabulary.language.name_pl} · ${wordCount(vocabulary.words.length)}`;
     $("resume-session").replaceChildren();
     for (const quiz of active.sessions) {
       const option = document.createElement("option"); option.value = quiz.session_id;
@@ -234,15 +277,23 @@ async function initialize() {
     }
     $("resume-panel").hidden = active.sessions.length === 0;
     const pending = pendingStart();
+    if (!pending && $("cfg-count").value === "10") $("cfg-count").value = Math.max(1, Math.min(10, vocabulary.words.length));
     const review = new URLSearchParams(window.location.search).get("review");
     if (["lang_to_pl", "pl_to_lang"].includes(review)) { $("cfg-source").value = "due"; $("cfg-mode").value = review; }
     else if (pending) { $("cfg-mode").value = pending.mode; $("cfg-count").value = pending.count; $("cfg-source").value = pending.source; message("cfg-msg", "Możesz ponowić poprzednią próbę rozpoczęcia quizu."); }
     updateSource();
     const id = Number(new URLSearchParams(window.location.search).get("session"));
     if (Number.isSafeInteger(id) && id > 0) await loadSession(id);
-    $("btn-start").disabled = false;
+    loaded = true;
   } catch (error) { report("cfg-msg", error); $("btn-retry-load").hidden = false; }
-  finally { booting = false; }
+  finally { booting = false; updateSource(); }
+  if (loaded && !new URLSearchParams(window.location.search).has("session")) {
+    const url = new URL(window.location.href);
+    const quick = url.searchParams.get("quick") === "1", warmup = url.searchParams.get("practice");
+    url.searchParams.delete("quick"); url.searchParams.delete("practice"); history.replaceState(null, "", url);
+    if (["cards", "matching"].includes(warmup)) openPractice(warmup);
+    else if (quick && !$("btn-start").disabled) await startQuiz();
+  }
 }
 
 function updateSource() {
@@ -250,7 +301,16 @@ function updateSource() {
   $("cfg-mode").querySelector('option[value="mix"]').disabled = due;
   if (due && $("cfg-mode").value === "mix") $("cfg-mode").value = "lang_to_pl";
   $("cfg-source-info").textContent = due ? "Tylko słowa zaplanowane na dziś lub zaległe. Możesz powtarzać nawet jedno słowo." : "Losowy quiz ze wszystkich Twoich słów (minimum 4 słowa w słowniku).";
+  $("btn-start").disabled = !vocabularyReady || booting || starting || !vocabularyWords.length || (!due && vocabularyWords.length < 4);
+  $("btn-flashcards").disabled = !vocabularyReady || !vocabularyWords.length;
+  $("btn-matching").disabled = !vocabularyReady || !vocabularyWords.length;
+  $("cfg-availability").textContent = vocabularyReady && !due && vocabularyWords.length < 4 ? "Do quizu dodaj co najmniej 4 słowa. Możesz już ćwiczyć z fiszkami." : "";
 }
+const practice = createPractice({onOpen: () => screen("practice"), onClose: () => { screen(practiceReturn); $(practiceReturn === "result" ? "btn-practice-mistakes" : "btn-flashcards").focus(); }});
+function openPractice(mode, words = vocabularyWords, returnTo = "config") { practiceReturn = returnTo; practice.setWords(words); practice.start(mode); }
+$("btn-flashcards").addEventListener("click", () => openPractice("cards"));
+$("btn-matching").addEventListener("click", () => openPractice("matching"));
+$("btn-practice-mistakes").addEventListener("click", () => openPractice("cards", mistakeWords, "result"));
 $("cfg-source").addEventListener("change", updateSource);
 $("btn-start").addEventListener("click", startQuiz);
 $("btn-retry-load").addEventListener("click", initialize);
@@ -264,25 +324,25 @@ $("btn-next").addEventListener("click", event => {
   if (event.detail > 1 || submitting || conflict) return;
   captureInput();
   if (currentIdx === session.total - 1) { void submitAll(); return; }
-  currentIdx++; changed(); renderQuestion();
+  goToQuestion(currentIdx + 1);
 });
 $("btn-previous").addEventListener("click", event => {
   if (event.detail > 1 || submitting || conflict || currentIdx === 0) return;
-  captureInput(); currentIdx--; changed(); renderQuestion();
+  goToQuestion(currentIdx - 1);
 });
 $("quiz-answer").addEventListener("keydown", event => {
   if (event.key === "Enter") { event.preventDefault(); if (!event.repeat) $("btn-next").click(); }
 });
 $("btn-save").addEventListener("click", () => { captureInput(); void flushDraft(); });
 $("btn-use-server").addEventListener("click", async () => {
-  if (!confirm("Wczytać zapis z serwera? Zastąpi to lokalne odpowiedzi w tym quizie.")) return;
+  if (!await confirmAction({title: "Wczytać zapis z serwera?", message: "Zastąpi to lokalne odpowiedzi w tym quizie.", label: "Wczytaj zapis"})) return;
   try { await loadSession(session.session_id, true); } catch (error) { report("quiz-feedback", error); }
 });
 $("btn-again").addEventListener("click", () => { session = null; setSessionURL(null); screen("config"); void initialize(); });
 $("logout").addEventListener("click", async () => {
   try {
     if (session && !session.finished && dirty && !await flushDraft()
-        && !confirm("Nie udało się zsynchronizować odpowiedzi. Wylogować mimo to? Niezsynchronizowana kopia lokalna zostanie usunięta.")) return;
+        && !await confirmAction({title: "Odpowiedzi nie zostały zsynchronizowane", message: "Wylogowanie usunie niezapisaną kopię z tego urządzenia. Możesz anulować i ponowić zapis.", label: "Wyloguj mimo to"})) return;
     await request("/api/auth/logout", "POST");
     if (session) removeStorage(draftKey());
     window.location.href = "/";

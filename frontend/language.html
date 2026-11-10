@@ -20,7 +20,7 @@
         <span id="lang-name">…</span>
       </h1>
       <div class="dash-actions">
-        <button id="btn-study" class="ghost" type="button">▶ Ucz się</button>
+        <button id="btn-study" class="ghost" type="button">Ucz się →</button>
         <button id="btn-add-word" class="primary" type="button">+ Dodaj słowo</button>
       </div>
     </div>
@@ -28,7 +28,8 @@
     <p id="language-msg" class="msg" role="status" aria-live="polite">Wczytywanie słów…</p>
     <button id="language-retry" class="ghost" type="button" hidden>Wczytaj ponownie</button>
 
-    <div class="dictionary-settings">
+    <details class="dictionary-settings disclosure">
+      <summary>Podpowiedzi i sprawdzanie słów</summary>
       <label class="dictionary-toggle" for="dictionary-enabled">
         <input id="dictionary-enabled" type="checkbox" disabled aria-describedby="dictionary-help dictionary-config-msg" />
         Sprawdzaj słowa w słowniku
@@ -36,13 +37,20 @@
       <small id="dictionary-help" class="muted">Od dwóch liter pokażemy propozycje. Wybierz kliknięciem lub strzałkami i Enterem. Brak wpisu nie blokuje dodawania.</small>
       <p id="dictionary-config-msg" class="msg" role="status" aria-live="polite"></p>
       <button id="dictionary-retry" class="ghost small" type="button" hidden>Ponów wczytywanie ustawienia</button>
-    </div>
+    </details>
 
     <h2 class="section-title">
       Moje słowa (<span id="word-count">0</span>)
     </h2>
+    <div class="word-toolbar">
+      <label for="word-search">Szukaj w słowniku
+        <input id="word-search" type="search" placeholder="Słowo, tłumaczenie lub inna forma…" autocomplete="off" />
+      </label>
+      <p id="word-visible" class="muted" role="status" aria-live="polite"></p>
+    </div>
+    <div class="word-table-heading" aria-hidden="true"><span>Słowo w języku obcym</span><span>Polskie tłumaczenie</span><span>Akcje</span></div>
 
-    <section id="word-list" class="word-list">
+    <section id="word-list" class="word-list" role="list" aria-label="Moje słowa">
       <p class="empty">Brak słów. Dodaj pierwszą parę w polach poniżej.</p>
     </section>
 

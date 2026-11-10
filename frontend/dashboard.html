@@ -12,9 +12,9 @@
     <button id="logout" class="ghost">Wyloguj</button>
   </header>
 
-  <main class="dashboard">
+  <main class="dashboard home-page">
     <div class="dash-header">
-      <h1>Witaj, <span id="user-login">…</span>!</h1>
+      <div><p class="eyebrow">Twój rytm nauki</p><h1>Witaj, <span id="user-login">…</span>!</h1><p class="muted">Małe kroki, coraz więcej pewności.</p></div>
       <div class="dash-actions">
         <button id="btn-refresh" class="ghost" type="button">Odśwież</button>
         <button id="btn-add-language" class="primary" type="button">+ Dodaj język</button>
@@ -22,6 +22,17 @@
     </div>
     <p id="dashboard-status" class="msg" role="status" aria-live="polite">Wczytywanie postępu…</p>
     <a id="dashboard-login" href="/" hidden>Zaloguj się ponownie</a>
+
+    <section class="learning-hero" aria-labelledby="continue-heading">
+      <div><p class="eyebrow">Na dobry początek</p><h2 id="continue-heading">Przygotowujemy Twoją naukę…</h2><p id="continue-description" class="muted">Za chwilę pojawi się kolejny krok.</p></div>
+      <a id="continue-learning" class="primary" href="/dashboard" hidden>Kontynuuj naukę <span aria-hidden="true">→</span></a>
+      <button id="continue-onboarding" class="primary" type="button" hidden>Wybierz język</button>
+    </section>
+
+    <section class="dashboard-section" aria-labelledby="languages-heading">
+      <div class="section-heading"><h2 id="languages-heading">Moje języki</h2><span class="muted">Twoje słowa i ćwiczenia</span></div>
+      <div id="my-languages" class="cards"><p class="empty">Wczytywanie języków…</p></div>
+    </section>
 
     <section class="stats-grid" aria-label="Twój postęp">
       <article class="stat-card"><h2>Przećwiczone słowa</h2><p id="stat-words">—</p><small>z aktualnego słownika</small></article>
@@ -36,6 +47,8 @@
       <div id="due-list" class="learning-list"><p>Wczytywanie powtórek…</p></div>
     </section>
 
+    <details class="dashboard-section disclosure" id="learning-details">
+      <summary>Historia i szczegóły postępu</summary>
     <section class="dashboard-section" aria-labelledby="difficult-heading">
       <h2 id="difficult-heading">Słowa sprawiające trudność</h2>
       <div id="difficult-list" class="learning-list"><p>Wczytywanie…</p></div>
@@ -47,11 +60,7 @@
       <p id="history-status" class="msg" role="status" aria-live="polite"></p>
       <button id="btn-history-more" class="ghost" type="button" hidden>Pokaż starsze wyniki</button>
     </section>
-
-    <h2 class="section-title">Moje języki</h2>
-    <section id="my-languages" class="cards">
-      <p class="empty">Nie masz jeszcze żadnego języka. Kliknij „+ Dodaj język".</p>
-    </section>
+    </details>
   </main>
 
   <!-- Modal: wybór języka -->

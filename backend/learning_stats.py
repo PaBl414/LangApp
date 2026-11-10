@@ -138,8 +138,15 @@ async def dashboard(db: AsyncSession, user_id: int, when: datetime):
     today = learning_date(when)
     due = await due_groups(db, user_id, today)
     summary["due_reviews"] = sum(group["count"] for group in due)
+    active = (await db.execute(select(StudySession).join(UserLanguage, and_(
+        UserLanguage.user_id == StudySession.user_id, UserLanguage.language_id == StudySession.language_id,
+    )).where(StudySession.user_id == user_id, StudySession.finished.is_(False)).order_by(
+        StudySession.id.desc(),
+    ).limit(1))).scalar_one_or_none()
     return {
         "timezone": LEARNING_TIMEZONE, "today": today.isoformat(), "summary": summary,
         "languages": languages, "due": due, "difficult": await difficult_words(db, user_id),
         "history": await history_page(db, user_id),
+        "active_session": {"session_id": active.id, "language_id": active.language_id,
+                           "current_index": active.current_index, "total": active.total} if active else None,
     }

@@ -16,6 +16,8 @@ LangApp is a small Polish-language vocabulary learning app. It provides account 
 - Editable vocabulary with explicit accepted alternatives in both translation directions.
 - A dashboard with previous results, practiced-word counts, accuracy, daily streaks and difficult vocabulary.
 - Scheduled daily reviews based on completed answers, tracked separately for both translation directions.
+- A focused dashboard with one next learning action, searchable vocabulary and a consistent responsive dark interface.
+- Ungraded flashcards and matching-pair warmups, including flashcards for mistakes from a completed quiz.
 - Optional multilingual dictionary checks with a browser toggle and a server-wide off switch.
 
 ## Requirements
@@ -106,6 +108,67 @@ The app serves its frontend and API from the same origin. Main route groups:
 - `GET /api/dictionary/config`, `GET /api/dictionary/check`
 
 Use `/docs` while the local server is running for the complete generated OpenAPI schema and request models.
+
+## Interface and learning flow
+
+The dashboard puts the next learning action first, followed by language cards,
+compact statistics and today's reviews. History and difficult vocabulary remain
+available under **Historia i szczegóły postępu**, collapsed initially. The main
+action prefers the latest unfinished quiz owned by the current account, then
+today's reviews, then a new quiz in a language with at least four words. With too
+few words it opens the vocabulary; a new account is guided to language selection.
+The dashboard API's `active_session` contains only the owned unfinished session's
+ID, language, question cursor and total; it contains no answers.
+
+Dashboard quick-start links use `quick=1`. The study page still authenticates,
+loads vocabulary and checks the configuration before starting. Start requests
+keep the existing UUID-based retry protection. Resuming a quiz continues to
+restore server and local drafts rather than creating a new quiz.
+
+The vocabulary page uses aligned word/translation/action columns, compact aliases
+and search across foreign words, Polish translations and both sets of accepted
+alternatives. Search ignores case and normalizes Unicode NFC. The adding row
+always stays below the visible entries, including empty search results. Successful
+saving clears the search so the new/updated word is visible. Newly added entries
+are appended above the form. Existing dictionary checking and autocomplete remain
+available in **Podpowiedzi i sprawdzanie słów**.
+
+Quizzes show how many answers have actually been filled, with an accessible
+progress bar. **Przejdź do pytania** expands a question map: filled questions are
+marked separately from the current question. Navigation preserves the existing
+automatic draft saving and stale-tab protection. Results start with a compact
+summary; individual answers are under **Szczegóły odpowiedzi**. A failed submission
+keeps the answers and permits the existing safe retry.
+
+### Interactive warmups
+
+The study configuration offers **Fiszki** and **Połącz pary** as separate,
+ungraded warmups using the account's loaded vocabulary:
+
+- **Fiszki** needs at least one word. Click the card or activate it with the
+  keyboard to reveal the answer; move with the buttons or left/right arrows,
+  shuffle, or change the translation direction. Accepted alternatives are shown
+  on the answer side. Cards are not automatically marked mastered by revealing.
+- **Połącz pary** selects up to four distinct pairs, shuffles each column and
+  gives immediate feedback for each choice. Incorrect pairs stay available for
+  another try. Completed pairs are disabled until a new round. Repeated primary
+  words or translations are excluded to avoid ambiguous tasks; fewer than two
+  distinct pairs shows guidance to use flashcards or add vocabulary.
+- After a completed quiz, **Przećwicz błędne odpowiedzi na fiszkach** builds a
+  deck only from incorrect result snapshots. It also works when the original
+  vocabulary has subsequently changed. Returning from it restores the result.
+
+Warmups make no quiz start/submission requests. They do not award XP, enter quiz
+history, change the daily streak or schedule reviews. The UI states this explicitly;
+complete a graded quiz to record learning progress. Warmup state exists only in
+the current page. Ordinary quizzes still use server-side grading and scheduling.
+
+The shared stylesheet now has one set of color, spacing, input, button, dialog and
+feedback styles. Destructive confirmations use accessible native dialogs with
+focus restoration; brief action confirmations use dismissible status toasts.
+The interface supports small screens, visible keyboard focus, wrapped long text
+and the system's reduced-motion preference. No fonts, images or UI libraries are
+downloaded for this visual update. No database migration is required.
 
 ## Quick vocabulary entry
 
@@ -383,7 +446,8 @@ GitHub Actions runs on pushes and pull requests with read-only repository
 permissions. It installs dependencies, runs `pip check`, compiles Python files
 and runs isolated regression tests on **Python 3.11 and 3.12**. A separate
 **Node.js 24** job checks JavaScript syntax, shared API error handling,
-dictionary toggle/response handling and vocabulary paste parsing. API regressions
+dictionary toggle/response handling, vocabulary paste/search, continuation priority,
+Polish count labels and non-ambiguous matching rounds. API regressions
 also cover dictionary fallbacks/statuses/cache, atomic imports, retry safety,
 concurrent writers, ownership and preserving review state when skipping duplicates.
 Action versions are pinned by commit SHA. CI results become available after
