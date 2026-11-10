@@ -43,16 +43,18 @@ def result_response(session: StudySession, answers: list[StudyAnswer]) -> dict:
             "expected": answer.expected,
             "accepted_answers": accepted_variants(answer.expected, answer.accepted_answers),
             "given": answer.given, "is_correct": answer.is_correct, "direction": answer.direction,
+            "example_sentence": answer.example_sentence, "example_translation": answer.example_translation,
         } for answer in answers],
     }
 
 
 def session_response(session: StudySession, answers: list[StudyAnswer]) -> dict:
     response = {
-        "session_id": session.id, "language_id": session.language_id, "source": session.source,
+        "session_id": session.id, "language_id": session.language_id, "source": session.source, "tag": session.tag,
         "mode": session.mode, "total": session.total, "revision": session.revision,
         "current_index": session.current_index, "finished": session.finished,
-        "questions": [{"word_id": answer.word_id, "direction": answer.direction, "prompt": answer.prompt} for answer in answers],
+        "questions": [{"word_id": answer.word_id, "direction": answer.direction, "prompt": answer.prompt,
+                       "context": answer.example_sentence if answer.direction == "lang_to_pl" else answer.example_translation} for answer in answers],
         "answers": [{"word_id": answer.word_id, "given": answer.given} for answer in answers],
     }
     # Expected answers and grading are never exposed for an unfinished quiz.
@@ -84,7 +86,7 @@ async def start_study(
             StudySession.user_id == user_id, StudySession.start_request_id == request_id,
         ))).scalar_one_or_none()
         if session:
-            if (session.language_id, session.mode, session.requested_count, session.source) != (payload.language_id, payload.mode, payload.count, payload.source):
+            if (session.language_id, session.mode, session.requested_count, session.source, normalize_answer(session.tag or "")) != (payload.language_id, payload.mode, payload.count, payload.source, normalize_answer(payload.tag or "")):
                 raise HTTPException(409, "Identyfikator rozpoczęcia został już użyty dla innych ustawień.")
             return session_response(session, await session_answers(db, session.id))
         return None
@@ -98,22 +100,29 @@ async def start_study(
     if membership is None:
         raise HTTPException(404, "Ten język nie jest dodany do Twojego profilu.")
     query = select(UserWord).where(
-        UserWord.user_id == user_id, UserWord.language_id == payload.language_id,
+        UserWord.user_id == user_id, UserWord.language_id == payload.language_id, UserWord.deleted_at.is_(None),
     )
     if payload.source == "due":
         query = query.join(WordReview, WordReview.word_id == UserWord.id).where(
             WordReview.user_id == user_id, WordReview.direction == payload.mode,
             WordReview.due_on <= learning_date(utc_now()),
-        ).order_by(WordReview.due_on, WordReview.last_correct, WordReview.last_reviewed_at, UserWord.id).limit(payload.count)
+        ).order_by(WordReview.due_on, WordReview.last_correct, WordReview.last_reviewed_at, UserWord.id)
+        if payload.tag is None:
+            query = query.limit(payload.count)
     words = list((await db.execute(query)).scalars().all())
+    if payload.tag is not None:
+        words = [word for word in words if normalize_answer(payload.tag) in {normalize_answer(tag) for tag in word.tags}]
     if payload.source == "due" and not words:
         raise HTTPException(400, "Brak zaplanowanych powtórek w tym kierunku na dziś.")
-    if payload.source == "all" and len(words) < MIN_WORDS:
+    if payload.source == "all" and payload.tag is None and len(words) < MIN_WORDS:
         raise HTTPException(400, f"Potrzebujesz co najmniej {MIN_WORDS} słów, żeby rozpocząć naukę.")
-    chosen = words if payload.source == "due" else random.sample(words, min(payload.count, len(words)))
+    if not words:
+        raise HTTPException(400, "Brak słów dla wybranego oznaczenia.")
+    chosen = words[:payload.count] if payload.source == "due" else random.sample(words, min(payload.count, len(words)))
     session = StudySession(
         user_id=user_id, language_id=payload.language_id, mode=payload.mode,
         total=len(chosen), requested_count=payload.count, start_request_id=request_id, source=payload.source,
+        tag=payload.tag,
     )
     db.add(session)
     try:
@@ -129,6 +138,7 @@ async def start_study(
                 prompt=word.word if to_polish else word.translation_pl,
                 expected=expected, accepted_answers=accepted_variants(expected, variants),
                 given="", is_correct=False,
+                example_sentence=word.example_sentence, example_translation=word.example_translation,
             )
             answers.append(answer)
             db.add(answer)
@@ -154,6 +164,7 @@ async def active_studies(
     ).order_by(StudySession.id.desc()).limit(20))).scalars().all()
     return {"sessions": [{
         "session_id": session.id, "mode": session.mode, "total": session.total, "source": session.source,
+        "tag": session.tag,
         "current_index": session.current_index, "created_at": session.created_at.isoformat(),
     } for session in sessions]}
 

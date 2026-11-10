@@ -12,6 +12,8 @@ from ..models import Language, UserLanguage, User, UserWord, StudySession, Study
 from ..schemas import AddLanguageRequest, AddWordRequest, ImportWordsRequest
 from ..grading import accepted_variants, clean_text, normalize_answer
 from ..reviews import word_signature
+from ..time_utils import utc_now
+from ..vocabulary import TRASH_RETENTION, purge_expired_words
 from .learning import current_user
 
 router = APIRouter(prefix="/api", tags=["languages"])
@@ -32,7 +34,7 @@ async def lock_vocabulary(db: AsyncSession, user_id: int, language_id: int) -> N
 
 async def duplicate_word(db: AsyncSession, user_id: int, language_id: int, primary: str, exclude_id: int | None = None) -> bool:
     rows = (await db.execute(select(UserWord.id, UserWord.word).where(
-        UserWord.user_id == user_id, UserWord.language_id == language_id,
+        UserWord.user_id == user_id, UserWord.language_id == language_id, UserWord.deleted_at.is_(None),
     ))).all()
     key = normalize_answer(primary)
     return any(row.id != exclude_id and normalize_answer(row.word) == key for row in rows)
@@ -41,6 +43,18 @@ async def duplicate_word(db: AsyncSession, user_id: int, language_id: int, prima
 async def cached_confirmation(db: AsyncSession, language_id: int, word: str) -> bool:
     language = await db.get(Language, language_id)
     return bool(language and dictionary.confirmed(language.code, word))
+
+
+async def locked_owned_word(db: AsyncSession, user_id: int, word_id: int) -> UserWord:
+    language_id = (await db.execute(select(UserWord.language_id).where(UserWord.id == word_id, UserWord.user_id == user_id))).scalar_one_or_none()
+    if language_id is None:
+        raise HTTPException(404, "Nie znaleziono słowa.")
+    await lock_vocabulary(db, user_id, language_id)
+    await purge_expired_words(db, user_id)
+    word = (await db.execute(select(UserWord).where(UserWord.id == word_id, UserWord.user_id == user_id).execution_options(populate_existing=True))).scalar_one_or_none()
+    if word is None:
+        raise HTTPException(404, "Słowo nie jest już dostępne w koszu.")
+    return word
 
 
 @router.get("/languages")
@@ -166,6 +180,9 @@ async def list_words(
     if not ul:
         raise HTTPException(404, "Ten język nie jest dodany do Twojego profilu.")
 
+    if await purge_expired_words(db, user.id):
+        await db.commit()
+
     lang = (await db.execute(
         select(Language).where(Language.id == language_id)
     )).scalar_one_or_none()
@@ -174,6 +191,7 @@ async def list_words(
         select(UserWord).where(
             UserWord.user_id == user.id,
             UserWord.language_id == language_id,
+            UserWord.deleted_at.is_(None),
         ).order_by(UserWord.created_at.desc())
     )).scalars().all()
 
@@ -183,18 +201,7 @@ async def list_words(
             "name_pl": lang.name_pl, "name_native": lang.name_native,
             "flag": lang.flag_emoji,
         },
-        "words": [
-            {
-                "id": w.id,
-                "word": w.word,
-                "translation_pl": w.translation_pl,
-                "translation_alternatives": w.translation_alternatives,
-                "word_alternatives": w.word_alternatives,
-                "is_valid": w.is_valid,
-                "created_at": w.created_at.isoformat(),
-            }
-            for w in words
-        ],
+        "words": [{**word_response(w), "created_at": w.created_at.isoformat()} for w in words],
     }
 
 
@@ -224,6 +231,8 @@ async def add_word(
         translation_pl=translation,
         translation_alternatives=accepted_variants(translation, payload.translation_alternatives)[1:],
         word_alternatives=accepted_variants(word, payload.word_alternatives)[1:],
+        example_sentence=clean_text(payload.example_sentence), example_translation=clean_text(payload.example_translation),
+        tags=payload.tags,
         is_valid=await cached_confirmation(db, language_id, word),
     )
     db.add(w)
@@ -251,7 +260,7 @@ async def import_words(
     await lock_vocabulary(db, user.id, language_id)
     language = await db.get(Language, language_id)
     existing = (await db.execute(select(UserWord).where(
-        UserWord.user_id == user.id, UserWord.language_id == language_id,
+        UserWord.user_id == user.id, UserWord.language_id == language_id, UserWord.deleted_at.is_(None),
     ))).scalars().all()
     by_word: dict[str, list[UserWord]] = {}
     for entry in existing:
@@ -292,6 +301,8 @@ def word_response(word: UserWord):
         "id": word.id, "word": word.word, "translation_pl": word.translation_pl,
         "translation_alternatives": word.translation_alternatives,
         "word_alternatives": word.word_alternatives, "is_valid": word.is_valid,
+        "example_sentence": word.example_sentence, "example_translation": word.example_translation,
+        "tags": word.tags,
     }
 
 
@@ -302,13 +313,9 @@ async def update_word(
     user: User = Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    word = (await db.execute(select(UserWord).where(
-        UserWord.id == word_id, UserWord.user_id == user.id,
-    ))).scalar_one_or_none()
-    if not word:
-        raise HTTPException(404, "Nie znaleziono słowa.")
-    await lock_vocabulary(db, user.id, word.language_id)
-    await db.refresh(word)
+    word = await locked_owned_word(db, user.id, word_id)
+    if word.deleted_at is not None:
+        raise HTTPException(404, "Przywróć słowo z kosza przed edycją.")
     primary = clean_text(payload.word)
     if await duplicate_word(db, user.id, word.language_id, primary, exclude_id=word.id):
         raise HTTPException(409, "To słowo już istnieje w tym języku.")
@@ -319,6 +326,11 @@ async def update_word(
     word.translation_alternatives = accepted_variants(word.translation_pl, payload.translation_alternatives)[1:]
     word.word_alternatives = accepted_variants(word.word, payload.word_alternatives)[1:]
     word.is_valid = verified or await cached_confirmation(db, word.language_id, primary)
+    if "tags" in payload.model_fields_set:
+        word.tags = payload.tags
+    if "example_sentence" in payload.model_fields_set or "example_translation" in payload.model_fields_set:
+        word.example_sentence = clean_text(payload.example_sentence)
+        word.example_translation = clean_text(payload.example_translation)
     if word_signature(word) != previous_signature:
         await db.execute(delete(WordReview).where(
             WordReview.user_id == user.id, WordReview.word_id == word.id,
@@ -333,17 +345,43 @@ async def delete_word(
     user: User = Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    w = (await db.execute(
-        select(UserWord).where(
-            UserWord.id == word_id,
-            UserWord.user_id == user.id,
-        )
-    )).scalar_one_or_none()
-    if not w:
-        raise HTTPException(404, "Nie znaleziono słowa.")
-    await db.execute(delete(WordReview).where(
-        WordReview.user_id == user.id, WordReview.word_id == w.id,
-    ))
-    await db.delete(w)
+    w = await locked_owned_word(db, user.id, word_id)
+    if w.deleted_at is None:
+        w.deleted_at = utc_now()
+    await db.commit()
+    return {"ok": True, "deleted_at": w.deleted_at.isoformat() + "Z", "expires_at": (w.deleted_at + TRASH_RETENTION).isoformat() + "Z"}
+
+
+@router.get("/user/languages/{language_id}/trash")
+async def list_trash(language_id: int, user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    membership = await db.scalar(select(UserLanguage.id).where(UserLanguage.user_id == user.id, UserLanguage.language_id == language_id))
+    if membership is None:
+        raise HTTPException(404, "Ten język nie jest dodany do Twojego profilu.")
+    if await purge_expired_words(db, user.id):
+        await db.commit()
+    words = (await db.execute(select(UserWord).where(UserWord.user_id == user.id, UserWord.language_id == language_id,
+        UserWord.deleted_at > utc_now() - TRASH_RETENTION).order_by(UserWord.deleted_at.desc()))).scalars().all()
+    return {"words": [{**word_response(word), "deleted_at": word.deleted_at.isoformat() + "Z",
+                      "expires_at": (word.deleted_at + TRASH_RETENTION).isoformat() + "Z"} for word in words]}
+
+
+@router.post("/words/{word_id}/restore")
+async def restore_word(word_id: int, user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    word = await locked_owned_word(db, user.id, word_id)
+    if word.deleted_at is not None:
+        if await duplicate_word(db, user.id, word.language_id, word.word, exclude_id=word.id):
+            raise HTTPException(409, "Słowo o tej nazwie już jest w słowniku. Zmień lub usuń aktywny wpis przed przywróceniem.")
+        word.deleted_at = None
+    await db.commit()
+    return {"ok": True, "word": word_response(word)}
+
+
+@router.delete("/words/{word_id}/permanent")
+async def permanently_delete_word(word_id: int, user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    word = await locked_owned_word(db, user.id, word_id)
+    if word.deleted_at is None:
+        raise HTTPException(400, "Najpierw przenieś słowo do kosza.")
+    await db.execute(delete(WordReview).where(WordReview.user_id == user.id, WordReview.word_id == word.id))
+    await db.delete(word)
     await db.commit()
     return {"ok": True}

@@ -1,6 +1,6 @@
 import { APIError, request } from "./api-client.js";
 import { createPractice } from "./practice.js";
-import { wordCount } from "./learning-ui.js";
+import { wordCount, vocabularyTags, filterVocabulary, textKey } from "./learning-ui.js";
 import { confirmAction } from "./ui.js";
 
 const params = new URLSearchParams(window.location.search);
@@ -35,7 +35,8 @@ function pendingStart() {
   if (pending && Object.hasOwn(modeNames, pending.mode) && Number.isInteger(pending.count)
       && pending.count >= 1 && pending.count <= 50 && typeof pending.request_id === "string"
       && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pending.request_id)
-      && ["all", "due"].includes(pending.source || "all")) return {...pending, source: pending.source || "all"};
+      && ["all", "due"].includes(pending.source || "all")
+      && (pending.tag == null || (typeof pending.tag === "string" && pending.tag.length > 0 && [...pending.tag].length <= 32))) return {...pending, source: pending.source || "all", tag: pending.tag || null};
   return null;
 }
 function persistDraft() {
@@ -48,6 +49,7 @@ function persistDraft() {
 function setSessionURL(id) {
   const url = new URL(window.location.href);
   if (id) url.searchParams.set("session", id); else url.searchParams.delete("session");
+  if (id && session) { if (session.tag) url.searchParams.set("tag", session.tag); else url.searchParams.delete("tag"); }
   history.replaceState(null, "", url);
 }
 function screen(name) {
@@ -92,9 +94,11 @@ function goToQuestion(index) {
 function renderQuestion() {
   const question = session.questions[currentIdx];
   $("quiz-progress").textContent = `Pytanie ${currentIdx + 1} / ${session.total}`;
-  $("quiz-mode").textContent = modeNames[session.mode] + (session.source === "due" ? " · powtórka" : "");
+  $("quiz-mode").textContent = modeNames[session.mode] + (session.source === "due" ? " · powtórka" : "") + (session.tag ? ` · ${session.tag}` : "");
   $("quiz-direction").textContent = question.direction === "lang_to_pl" ? "Przetłumacz na polski:" : "Przetłumacz na język obcy:";
   $("quiz-word").textContent = question.prompt;
+  $("quiz-context").textContent = question.context || "";
+  $("quiz-context").hidden = !question.context;
   $("quiz-answer").value = answers[currentIdx].given;
   buttons();
   if (!submitting) $("quiz-answer").focus();
@@ -216,6 +220,7 @@ function showResult(data) {
     translation_pl: result.direction === "pl_to_lang" ? result.prompt : result.expected,
     translation_alternatives: result.direction === "pl_to_lang" ? [] : (result.accepted_answers || []).slice(1),
     word_alternatives: result.direction === "pl_to_lang" ? (result.accepted_answers || []).slice(1) : [],
+    example_sentence: result.example_sentence || "", example_translation: result.example_translation || "",
   }));
   $("btn-practice-mistakes").hidden = !mistakeWords.length;
   $("res-list").replaceChildren();
@@ -223,8 +228,14 @@ function showResult(data) {
     const row = document.createElement("div");
     row.className = "res-row " + (result.is_correct ? "ok" : "bad");
     const icon = document.createElement("span"); icon.className = "res-icon"; icon.textContent = result.is_correct ? "✓" : "✗";
-    const text = document.createElement("span");
+    const text = document.createElement("div");
     text.textContent = `${result.prompt} → ${(result.accepted_answers || [result.expected]).join(" / ")}${result.is_correct ? "" : ` (wpisano: ${result.given || "—"})`}`;
+    if (result.example_sentence) {
+      const example = document.createElement("p"), translation = document.createElement("p");
+      example.className = translation.className = "example-text muted";
+      example.textContent = result.example_sentence; translation.textContent = result.example_translation;
+      text.append(example, translation);
+    }
     row.append(icon, text); $("res-list").append(row);
   }
 }
@@ -238,15 +249,16 @@ function requestId() {
 async function startQuiz() {
   if (starting || booting || !userId) return;
   const mode = $("cfg-mode").value, count = Number($("cfg-count").value), source = $("cfg-source").value;
+  const tag = $("cfg-tag").value || null;
   if (!Number.isInteger(count) || count < 1 || count > 50) { message("cfg-msg", "Wpisz liczbę słów od 1 do 50.", true); return; }
   let pending = pendingStart();
-  if (!pending || pending.mode !== mode || pending.count !== count || pending.source !== source) pending = {mode, count, source, request_id: requestId()};
+  if (!pending || pending.mode !== mode || pending.count !== count || pending.source !== source || pending.tag !== tag) pending = {mode, count, source, tag, request_id: requestId()};
   writeStorage(startKey(), pending);
   pendingStartMemory = pending;
   starting = true; $("btn-start").disabled = true;
   message("cfg-msg", "Rozpoczynanie…");
   try {
-    const data = await request("/api/study/start", "POST", {language_id: LANGUAGE_ID, mode: pending.mode, count: pending.count, source: pending.source, request_id: pending.request_id});
+    const data = await request("/api/study/start", "POST", {language_id: LANGUAGE_ID, mode: pending.mode, count: pending.count, source: pending.source, tag: pending.tag, request_id: pending.request_id});
     adoptSession(data); removeStorage(startKey()); pendingStartMemory = null;
   } catch (error) { report("cfg-msg", error); }
   finally { starting = false; updateSource(); }
@@ -277,6 +289,13 @@ async function initialize() {
     }
     $("resume-panel").hidden = active.sessions.length === 0;
     const pending = pendingStart();
+    let wantedTag = new URLSearchParams(window.location.search).get("tag") || pending?.tag || $("cfg-tag").value;
+    const tags = vocabularyTags(vocabulary.words);
+    wantedTag = tags.find(tag => textKey(tag) === textKey(wantedTag || "")) || wantedTag;
+    $("cfg-tag").replaceChildren(new Option("Wszystkie słowa", ""));
+    tags.forEach(tag => $("cfg-tag").append(new Option(tag, tag)));
+    if (wantedTag && !tags.includes(wantedTag)) $("cfg-tag").append(new Option(wantedTag + " — brak słów", wantedTag));
+    $("cfg-tag").value = wantedTag || "";
     if (!pending && $("cfg-count").value === "10") $("cfg-count").value = Math.max(1, Math.min(10, vocabulary.words.length));
     const review = new URLSearchParams(window.location.search).get("review");
     if (["lang_to_pl", "pl_to_lang"].includes(review)) { $("cfg-source").value = "due"; $("cfg-mode").value = review; }
@@ -298,20 +317,24 @@ async function initialize() {
 
 function updateSource() {
   const due = $("cfg-source").value === "due";
+  const selectedWords = filterVocabulary(vocabularyWords, "", $("cfg-tag").value);
+  const minimum = $("cfg-tag").value ? 1 : 4;
   $("cfg-mode").querySelector('option[value="mix"]').disabled = due;
   if (due && $("cfg-mode").value === "mix") $("cfg-mode").value = "lang_to_pl";
-  $("cfg-source-info").textContent = due ? "Tylko słowa zaplanowane na dziś lub zaległe. Możesz powtarzać nawet jedno słowo." : "Losowy quiz ze wszystkich Twoich słów (minimum 4 słowa w słowniku).";
-  $("btn-start").disabled = !vocabularyReady || booting || starting || !vocabularyWords.length || (!due && vocabularyWords.length < 4);
-  $("btn-flashcards").disabled = !vocabularyReady || !vocabularyWords.length;
-  $("btn-matching").disabled = !vocabularyReady || !vocabularyWords.length;
-  $("cfg-availability").textContent = vocabularyReady && !due && vocabularyWords.length < 4 ? "Do quizu dodaj co najmniej 4 słowa. Możesz już ćwiczyć z fiszkami." : "";
+  $("cfg-source-info").textContent = due ? "Tylko słowa zaplanowane na dziś lub zaległe. Możesz powtarzać nawet jedno słowo." : $("cfg-tag").value ? "Quiz z wybranym oznaczeniem. Możesz ćwiczyć nawet jedno słowo." : "Losowy quiz ze wszystkich Twoich słów (minimum 4 słowa w słowniku).";
+  $("cfg-tag-info").textContent = $("cfg-tag").value ? `${wordCount(selectedWords.length)} z oznaczeniem „${$("cfg-tag").value}”. Wybór dotyczy quizu, fiszek i łączenia par.` : "";
+  $("btn-start").disabled = !vocabularyReady || booting || starting || !selectedWords.length || (!due && selectedWords.length < minimum);
+  $("btn-flashcards").disabled = !vocabularyReady || !selectedWords.length;
+  $("btn-matching").disabled = !vocabularyReady || !selectedWords.length;
+  $("cfg-availability").textContent = !selectedWords.length && vocabularyReady ? "Dodaj słowa lub zmień oznaczenie." : vocabularyReady && !due && selectedWords.length < minimum ? "Do quizu dodaj co najmniej 4 słowa. Możesz już ćwiczyć z fiszkami." : "";
 }
 const practice = createPractice({onOpen: () => screen("practice"), onClose: () => { screen(practiceReturn); $(practiceReturn === "result" ? "btn-practice-mistakes" : "btn-flashcards").focus(); }});
-function openPractice(mode, words = vocabularyWords, returnTo = "config") { practiceReturn = returnTo; practice.setWords(words); practice.start(mode); }
+function openPractice(mode, words = filterVocabulary(vocabularyWords, "", $("cfg-tag").value), returnTo = "config") { practiceReturn = returnTo; practice.setWords(words); practice.start(mode); }
 $("btn-flashcards").addEventListener("click", () => openPractice("cards"));
 $("btn-matching").addEventListener("click", () => openPractice("matching"));
 $("btn-practice-mistakes").addEventListener("click", () => openPractice("cards", mistakeWords, "result"));
 $("cfg-source").addEventListener("change", updateSource);
+$("cfg-tag").addEventListener("change", updateSource);
 $("btn-start").addEventListener("click", startQuiz);
 $("btn-retry-load").addEventListener("click", initialize);
 $("btn-resume").addEventListener("click", async () => {

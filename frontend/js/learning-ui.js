@@ -58,8 +58,15 @@ export function continueTarget(data) {
   return {title: "Twój pierwszy krok do nowego języka", label: "Wybierz język", detail: "Wybierz język, dodaj swoje słowa i ucz się we własnym tempie.", href: null};
 }
 
-export function filterVocabulary(words, query) {
+export function vocabularyTags(words) {
+  const unique = new Map();
+  for (const word of words) for (const tag of word.tags || []) if (!unique.has(textKey(tag))) unique.set(textKey(tag), tag);
+  return [...unique.values()].sort((a, b) => a.localeCompare(b, "pl"));
+}
+
+export function filterVocabulary(words, query, tag = "") {
   const key = textKey(query);
-  return !key ? words : words.filter(word => [word.word, word.translation_pl,
-    ...(word.translation_alternatives || []), ...(word.word_alternatives || [])].some(value => textKey(value).includes(key)));
+  const selected = tag ? words.filter(word => (word.tags || []).some(value => textKey(value) === textKey(tag))) : words;
+  return !key ? selected : selected.filter(word => [word.word, word.translation_pl, word.example_sentence || "", word.example_translation || "",
+    ...(word.tags || []), ...(word.translation_alternatives || []), ...(word.word_alternatives || [])].some(value => textKey(value).includes(key)));
 }

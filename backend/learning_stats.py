@@ -29,11 +29,12 @@ async def statistics(db: AsyncSession, user_id: int, when: datetime):
     ).where(UserLanguage.user_id == user_id).order_by(Language.name_pl))).all()
     totals = {row.language_id: row.word_count for row in (await db.execute(select(
         UserWord.language_id, func.count().label("word_count"),
-    ).where(UserWord.user_id == user_id).group_by(UserWord.language_id))).all()}
+    ).where(UserWord.user_id == user_id, UserWord.deleted_at.is_(None)).group_by(UserWord.language_id))).all()}
     practiced = {row.language_id: row.word_count for row in (await db.execute(select(
         WordReview.language_id, func.count(func.distinct(WordReview.word_id)).label("word_count"),
     ).join(UserWord, and_(UserWord.id == WordReview.word_id, UserWord.user_id == WordReview.user_id)).where(
         WordReview.user_id == user_id, WordReview.attempts > 0, WordReview.language_id == UserWord.language_id,
+        UserWord.deleted_at.is_(None),
     ).group_by(WordReview.language_id))).all()}
     completed = defaultdict(lambda: {"quizzes": 0, "answers": 0, "correct": 0, "days": set()})
     all_days = set()
@@ -78,6 +79,7 @@ def owned_reviews(user_id: int):
     return and_(
         WordReview.user_id == user_id, UserWord.user_id == user_id,
         UserLanguage.user_id == user_id, UserLanguage.language_id == UserWord.language_id,
+        UserWord.deleted_at.is_(None),
     )
 
 
@@ -126,6 +128,7 @@ async def history_page(db: AsyncSession, user_id: int, limit: int = 10, offset: 
         "id": session.id, "language_id": session.language_id,
         "language_name": language.name_pl if language else "Usunięty język",
         "mode": session.mode, "source": session.source, "total": session.total, "correct": session.correct,
+        "tag": session.tag,
         "percent": accuracy(session.correct, session.total),
         "finished_at": session.finished_at.isoformat() + "Z" if session.finished_at else None,
     } for session, language in rows]

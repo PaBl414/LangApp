@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LangApp — Język</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌐</text></svg>" />
+  <script src="/js/appearance.js"></script>
   <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
@@ -46,6 +47,7 @@
       <label for="word-search">Szukaj w słowniku
         <input id="word-search" type="search" placeholder="Słowo, tłumaczenie lub inna forma…" autocomplete="off" />
       </label>
+      <label for="word-tag-filter">Oznaczenie<select id="word-tag-filter"><option value="">Wszystkie oznaczenia</option></select></label>
       <p id="word-visible" class="muted" role="status" aria-live="polite"></p>
     </div>
     <div class="word-table-heading" aria-hidden="true"><span>Słowo w języku obcym</span><span>Polskie tłumaczenie</span><span>Akcje</span></div>
@@ -105,6 +107,13 @@
       </div>
     </section>
     </details>
+    <details id="word-trash" class="disclosure trash-section">
+      <summary>Kosz <span id="trash-count"></span></summary>
+      <p class="muted">Słowa możesz przywrócić przez 7 dni. W koszu nie pojawiają się w nowych ćwiczeniach i powtórkach.</p>
+      <button id="trash-refresh" class="ghost small" type="button">Odśwież kosz</button>
+      <p id="trash-status" class="msg" role="status" aria-live="polite"></p>
+      <div id="trash-list" class="learning-list"></div>
+    </details>
   </main>
 
   <!-- Formularz zaawansowany i edycja słowa -->
@@ -131,6 +140,20 @@
                  autocomplete="off" autocapitalize="off" spellcheck="false" />
         </label>
         <p class="muted">Enter po słowie przechodzi do tłumaczenia. Enter po tłumaczeniu zapisuje i otwiera kolejną parę przy dodawaniu.</p>
+
+        <details id="word-context-options" class="metadata-options">
+          <summary>Przykładowe zdanie i oznaczenia</summary>
+          <label class="field">Zdanie w języku obcym (opcjonalnie)
+            <textarea id="w-example" rows="2" maxlength="500" placeholder="Np. Hello, how are you?"></textarea>
+          </label>
+          <label class="field">Polskie tłumaczenie zdania
+            <textarea id="w-example-translation" rows="2" maxlength="500" placeholder="Np. Cześć, jak się masz?"></textarea>
+          </label>
+          <label class="field">Oznaczenia (opcjonalnie)
+            <input id="w-tags" type="text" maxlength="350" placeholder="Ważne, Trudne, Do pracy" autocomplete="off" />
+          </label>
+          <p class="muted">Oddziel oznaczenia przecinkami. Do 10 oznaczeń po 32 znaki. Zdanie i jego tłumaczenie dodaj razem.</p>
+        </details>
 
         <details id="word-options">
           <summary>Alternatywne poprawne odpowiedzi</summary>

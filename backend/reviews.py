@@ -43,13 +43,15 @@ def word_signature(word: UserWord):
 async def record_reviews(db: AsyncSession, session: StudySession, answers: list[StudyAnswer], when: datetime):
     words = (await db.execute(select(UserWord).where(
         UserWord.user_id == session.user_id, UserWord.language_id == session.language_id,
+        UserWord.deleted_at.is_(None),
         UserWord.id.in_([answer.word_id for answer in answers]),
     ))).scalars().all()
     by_id = {word.id: word for word in words}
     for answer in answers:
         word = by_id.get(answer.word_id)
         # Deleted/edited entries must not receive learning credit for an old snapshot.
-        if word is None or not snapshot_matches(word, answer):
+        if (word is None or not snapshot_matches(word, answer)
+                or (word.created_at and session.created_at and word.created_at > session.created_at)):
             continue
         query = select(WordReview).where(
             WordReview.user_id == session.user_id, WordReview.word_id == word.id,

@@ -18,6 +18,8 @@ LangApp is a small Polish-language vocabulary learning app. It provides account 
 - Scheduled daily reviews based on completed answers, tracked separately for both translation directions.
 - A focused dashboard with one next learning action, searchable vocabulary and a consistent responsive dark interface.
 - Ungraded flashcards and matching-pair warmups, including flashcards for mistakes from a completed quiz.
+- Editable example sentences with Polish translations, personal word labels and label-filtered learning.
+- A seven-day word recycle bin with restore/undo, plus light/dark/system themes and larger text.
 - Optional multilingual dictionary checks with a browser toggle and a server-wide off switch.
 
 ## Requirements
@@ -105,6 +107,8 @@ The app serves its frontend and API from the same origin. Main route groups:
 - `PUT /api/study/sessions/{id}/draft`, `POST /api/study/submit`
 - `PUT /api/words/{id}` for editing vocabulary and accepted alternatives
 - `POST /api/user/languages/{language_id}/words/import` for atomic quick entry (1–100 pairs)
+- `GET /api/user/languages/{language_id}/trash`, `POST /api/words/{id}/restore`
+- `DELETE /api/words/{id}` to move a word to the recycle bin, `DELETE /api/words/{id}/permanent` to permanently delete an already trashed entry
 - `GET /api/dictionary/config`, `GET /api/dictionary/check`
 
 Use `/docs` while the local server is running for the complete generated OpenAPI schema and request models.
@@ -168,7 +172,94 @@ feedback styles. Destructive confirmations use accessible native dialogs with
 focus restoration; brief action confirmations use dismissible status toasts.
 The interface supports small screens, visible keyboard focus, wrapped long text
 and the system's reduced-motion preference. No fonts, images or UI libraries are
-downloaded for this visual update. No database migration is required.
+downloaded for the interface. The vocabulary features below require migration
+`0004_vocabulary_experience`, applied automatically at application startup.
+
+## Examples, personal labels and appearance
+
+Use **Edytuj** or **Więcej opcji**, then expand **Przykładowe zdanie i oznaczenia**.
+Each word may have one foreign-language example and its Polish translation
+(up to 500 characters each). Enter both or leave both empty. These are your
+editable examples; the application does not invent or machine-translate them.
+Saved examples appear under **Zdanie w kontekście** in the vocabulary list.
+
+Flashcards display the prompt-language example on the front. The other sentence
+appears only after revealing the answer. A quiz snapshots both sentences when
+it starts but sends only the prompt-language context before completion. The
+translated context is available in the finished result. Editing examples later
+does not change an existing quiz's context. Examples and labels do not affect
+answer equivalence and do not reset the word's review schedule.
+
+Labels such as **Ważne**, **Trudne** or **Do pracy** are free-form: enter up to
+10 comma-separated labels, each with 1–32 characters. Commas and line breaks
+cannot be part of a label. The server normalizes whitespace/NFC and deduplicates
+labels without regard to case. Labels belong to each owned vocabulary entry;
+they are not a shared public catalog.
+
+The vocabulary's **Oznaczenie** filter and label chips restrict the word list.
+Search also includes examples and labels. **Ucz się** carries the selected label
+to the study page. Its **Oznaczenie** selector applies to new quizzes, flashcards
+and matching pairs. A selected label permits a graded quiz from one matching
+active word; an unfiltered ordinary quiz still requires four words. Scheduled
+reviews still select only due entries in the chosen direction. An unknown or
+empty label subset never falls back silently to the whole vocabulary.
+
+API clients may send `example_sentence`, `example_translation` and `tags` on
+single-word add/edit requests. An old edit request omitting these new fields
+preserves existing metadata; send both empty example fields or `tags: []` to clear
+them explicitly. Batch paste still accepts word/translation pairs only and never
+overwrites metadata on skipped duplicates. `POST /api/study/start` accepts an
+optional `tag`; it is part of idempotent start configuration. Later label changes
+do not change existing question snapshots. A resumed quiz retains its tag.
+
+Use **Wygląd** in the header (or at the top of the login page) for **Jasny**,
+**Ciemny** or **Zgodny z systemem** themes and standard/larger text. The default
+follows the operating system. Larger text increases the base size by 12.5%; text
+styles use relative units so labels and vocabulary scale as well as paragraphs.
+Preferences are applied before the stylesheet, saved locally per browser/origin,
+and synchronized across open tabs. They do not sync to another device/account.
+Blocked browser storage leaves the controls usable for the current page and
+shows that the preference could not be remembered. Reduced-motion support and
+keyboard focus styles work in both themes.
+
+## Word recycle bin
+
+**Do kosza** removes a word from active vocabulary immediately. The status toast
+offers **Cofnij**; the **Kosz** section also allows restoration for seven days
+from the server's UTC deletion timestamp. Retrying the deletion does not extend
+that deadline. Examples, labels, accepted alternatives and both directions'
+review state are preserved while the word is in the bin.
+
+- Trashed words are excluded from active counts, difficult-word lists, scheduled
+  reviews and new quizzes/flashcards/pair tasks. Already-started quizzes retain
+  their immutable questions and can finish, but do not award new review state to
+  a word while it is in the bin. Finished quiz results and historical XP/accuracy
+  remain available.
+- **Przywróć** restores the same entry and its previous review dates. A past due
+  date makes it eligible for a review now. Restore retries are safe. If another
+  active entry has the same normalized word, restoration returns HTTP 409 and
+  keeps the trashed entry untouched; no active word is overwritten.
+- **Usuń na zawsze** requires explicit confirmation and works only for an
+  already-trashed owned word. It deletes that entry and its review state, keeping
+  historical answer snapshots. Removing an entire language remains a permanent
+  deletion of its active/trash entries, reviews and quizzes.
+- Expired entries cannot be restored or listed. Their physical deletion and
+  review cleanup runs on the owner's next vocabulary/trash access or successful
+  word mutation; there is no background cleanup worker. An inactive database can
+  retain expired rows until that access. Private backups have their own retention
+  and are not automatically rewritten.
+
+The routes enforce account and language ownership. Restore/delete/import writes
+use the existing membership lock to serialize conflicting vocabulary changes.
+A newly created word reusing a permanently deleted SQLite row ID cannot receive
+review credit from an older quiz snapshot.
+
+Migration `0004_vocabulary_experience` adds examples, tags, nullable deletion
+timestamps, a trash lookup index, quiz tag configuration and example snapshots.
+It preserves existing rows, with blank examples, empty labels, active words and
+unfiltered quiz defaults. Back up the database before the first upgrade using
+the procedure above. It runs transactionally; a failed upgrade rolls back and
+can be retried. Downgrades require restoring a backup.
 
 ## Quick vocabulary entry
 
@@ -382,8 +473,9 @@ The dashboard distinguishes unfinished drafts from completed learning activity:
 
 - **Przećwiczone słowa** counts distinct entries in the current vocabulary with
   review state for at least one direction. It means practiced, not mastered.
-  Editing the learning content resets that word's review state; deleting it
-  removes its review state. Previous quiz results remain unchanged.
+  Editing the learning content resets that word's review state. Moving it to the
+  recycle bin preserves but hides that state; permanent deletion removes it.
+  Previous quiz results remain unchanged.
 - Quiz counts, answer totals and accuracy come from completed quiz snapshots,
   including answers for vocabulary entries later deleted. Drafts do not count.
   Accuracy is shown as unknown when there are no completed answers.
@@ -447,8 +539,9 @@ permissions. It installs dependencies, runs `pip check`, compiles Python files
 and runs isolated regression tests on **Python 3.11 and 3.12**. A separate
 **Node.js 24** job checks JavaScript syntax, shared API error handling,
 dictionary toggle/response handling, vocabulary paste/search, continuation priority,
-Polish count labels and non-ambiguous matching rounds. API regressions
-also cover dictionary fallbacks/statuses/cache, atomic imports, retry safety,
+Polish count labels, tag/context search and non-ambiguous matching rounds. API regressions
+also cover vocabulary metadata and quiz snapshots, recycle-bin retention/restore,
+ownership, migration rollback, dictionary fallbacks/statuses/cache, atomic imports, retry safety,
 concurrent writers, ownership and preserving review state when skipping duplicates.
 Action versions are pinned by commit SHA. CI results become available after
 the workflow is pushed to GitHub; configuring it locally does not run remote CI.

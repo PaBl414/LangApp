@@ -18,6 +18,8 @@ export function createPractice({onOpen, onClose}) {
     const aliases = toPolish() ? word.translation_alternatives : word.word_alternatives;
     $("practice-card-hint").textContent = revealed ? "Kliknij, aby wrócić do pytania" : "Kliknij kartę lub naciśnij Spację, aby odsłonić";
     $("practice-card-extra").textContent = revealed && aliases?.length ? "Również: " + aliases.join(" · ") : "";
+    $("practice-example").textContent = (toPolish() ? word.example_sentence : word.example_translation) || "";
+    $("practice-example-translation").textContent = revealed ? (toPolish() ? word.example_translation : word.example_sentence) || "" : "";
     $("practice-card").classList.toggle("revealed", revealed);
     $("practice-card").setAttribute("aria-pressed", String(revealed));
     $("practice-previous").disabled = index === 0;

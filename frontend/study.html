@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LangApp — Nauka</title>
+  <script src="/js/appearance.js"></script>
   <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
@@ -51,6 +52,7 @@
       </div>
       </div>
 
+      <div class="form-row"><label>Oznaczenie<select id="cfg-tag"><option value="">Wszystkie słowa</option></select></label><p id="cfg-tag-info" class="muted"></p></div>
       <div class="form-row">
         <label>Maksymalna liczba słów
           <input type="number" id="cfg-count" min="1" max="50" value="10" />
@@ -78,7 +80,7 @@
       <div class="practice-toolbar"><label>Kierunek<select id="practice-direction"><option value="lang_to_pl">Obcy → polski</option><option value="pl_to_lang">Polski → obcy</option></select></label><button id="practice-switch" class="ghost" type="button">Zmień ćwiczenie</button></div>
       <p id="practice-count" class="muted" role="status" aria-live="polite"></p>
       <div id="practice-cards">
-        <button id="practice-card" class="practice-flashcard" type="button" aria-pressed="false"><span id="practice-card-side" class="eyebrow"></span><strong id="practice-card-text"></strong><span id="practice-card-hint" class="muted"></span></button>
+        <button id="practice-card" class="practice-flashcard" type="button" aria-pressed="false"><span id="practice-card-side" class="eyebrow"></span><strong id="practice-card-text"></strong><span id="practice-example" class="example-text"></span><span id="practice-example-translation" class="example-text muted"></span><span id="practice-card-hint" class="muted"></span></button>
         <p id="practice-card-extra" class="muted"></p>
         <div class="practice-navigation"><button id="practice-previous" class="ghost" type="button">← Poprzednia</button><button id="practice-shuffle" class="ghost" type="button">Potasuj</button><button id="practice-next" class="primary" type="button">Następna →</button></div>
       </div>
@@ -99,6 +101,7 @@
       <div class="quiz-prompt">
         <p class="muted" id="quiz-direction"></p>
         <h2 id="quiz-word">…</h2>
+        <p id="quiz-context" class="example-text" hidden></p>
       </div>
 
       <label class="muted" for="quiz-answer">Twoja odpowiedź</label>

@@ -1,4 +1,4 @@
-export function notify(message, tone = "ok") {
+export function notify(message, tone = "ok", action = null) {
   let region = document.getElementById("toast-region");
   if (!region) {
     region = document.createElement("div"); region.id = "toast-region";
@@ -11,8 +11,19 @@ export function notify(message, tone = "ok") {
   const close = document.createElement("button"); close.type = "button"; close.textContent = "×";
   close.className = "ghost"; close.setAttribute("aria-label", "Zamknij komunikat");
   close.addEventListener("click", () => toast.remove());
-  toast.append(text, close); region.append(toast);
-  setTimeout(() => toast.remove(), 5000);
+  toast.append(text);
+  let timer = null;
+  if (action) {
+    const button = document.createElement("button"); button.type = "button"; button.className = "ghost"; button.textContent = action.label;
+    button.addEventListener("click", async () => {
+      clearTimeout(timer); button.disabled = true;
+      try { await action.onClick(); toast.remove(); }
+      catch (error) { text.textContent = error.message; toast.className = "toast error"; button.disabled = false; }
+    });
+    toast.append(button);
+  }
+  toast.append(close); region.append(toast);
+  timer = setTimeout(() => toast.remove(), 5000);
 }
 
 export function confirmAction({title = "Potwierdź działanie", message, label = "Potwierdź"}) {

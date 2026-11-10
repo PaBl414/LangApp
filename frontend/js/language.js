@@ -1,7 +1,7 @@
 import { request } from "./api-client.js";
 import { previewWords, cleanWordText } from "./quick-words.js";
 import { createWordChecker, readDictionaryPreference, saveDictionaryPreference, DICTIONARY_PREFERENCE } from "./dictionary.js";
-import { filterVocabulary } from "./learning-ui.js";
+import { filterVocabulary, vocabularyTags } from "./learning-ui.js";
 import { confirmAction, notify } from "./ui.js";
 
 /**
@@ -24,6 +24,7 @@ let savingQuick = false;
 let savingInline = false;
 let WORDS = [];
 let loadVersion = 0;
+let trashWords = [], trashLoaded = false, trashVersion = 0;
 
 // === 2. Wylogowanie ===
 document.getElementById("logout").addEventListener("click", async () => {
@@ -61,7 +62,11 @@ async function loadAll() {
 
 function renderWords(words) {
   WORDS = words;
-  const visible = filterVocabulary(words, document.getElementById("word-search").value);
+  const tagFilter = document.getElementById("word-tag-filter"), selectedTag = tagFilter.value;
+  tagFilter.replaceChildren(new Option("Wszystkie oznaczenia", ""));
+  vocabularyTags(words).forEach(tag => tagFilter.append(new Option(tag, tag)));
+  tagFilter.value = [...tagFilter.options].some(option => option.value === selectedTag) ? selectedTag : "";
+  const visible = filterVocabulary(words, document.getElementById("word-search").value, tagFilter.value);
   document.getElementById("word-visible").textContent = `Widoczne: ${visible.length} z ${words.length}`;
   document.getElementById("word-count").textContent = words.length;
   const el = document.getElementById("word-list");
@@ -79,13 +84,15 @@ function renderWords(words) {
     div.setAttribute("role", "listitem");
     div.innerHTML = `
       <div class="word-cell word-foreign"><b>${escapeHtml(w.word)}</b>
-        ${(w.word_alternatives || []).length ? `<small class="muted">${w.word_alternatives.map(escapeHtml).join(" · ")}</small>` : ""}</div>
+        ${(w.word_alternatives || []).length ? `<small class="muted">${w.word_alternatives.map(escapeHtml).join(" · ")}</small>` : ""}
+        <div class="word-tags">${(w.tags || []).map(tag => `<button type="button" class="tag-chip" data-word-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</button>`).join("")}</div></div>
       <div class="word-cell word-polish"><span>${escapeHtml(w.translation_pl)}</span>
         ${(w.translation_alternatives || []).length ? `<small class="muted">${w.translation_alternatives.map(escapeHtml).join(" · ")}</small>` : ""}</div>
       <div class="word-actions">
         <button class="ghost small" type="button" data-edit="${w.id}">Edytuj</button>
-        <button class="ghost small danger" type="button" data-id="${w.id}">Usuń</button>
+        <button class="ghost small" type="button" data-id="${w.id}">Do kosza</button>
       </div>
+      ${w.example_sentence ? `<details class="word-context"><summary>Zdanie w kontekście</summary><p>${escapeHtml(w.example_sentence)}</p><p class="muted">${escapeHtml(w.example_translation)}</p></details>` : ""}
     `;
     el.appendChild(div);
   });
@@ -93,17 +100,23 @@ function renderWords(words) {
   el.querySelectorAll("button[data-edit]").forEach(button => {
     button.addEventListener("click", () => openEditor(words.find(word => word.id === Number(button.dataset.edit))));
   });
+  el.querySelectorAll("button[data-word-tag]").forEach(button => button.addEventListener("click", () => {
+    tagFilter.value = vocabularyTags(WORDS).find(tag => tag.toLowerCase() === button.dataset.wordTag.toLowerCase()) || "";
+    renderWords(WORDS);
+  }));
 
   el.querySelectorAll("button[data-id]").forEach(btn => {
     btn.addEventListener("click", async () => {
       if (savingQuick || savingWord || savingInline) return;
       btn.disabled = true;
       try {
-        if (!await confirmAction({title: "Usunąć słowo?", message: "Usuniesz słowo i jego terminy powtórek. Wyniki ukończonych quizów pozostaną w historii.", label: "Usuń słowo"})) return;
-        await request(`/api/words/${btn.dataset.id}`, "DELETE");
+        const word = WORDS.find(word => word.id === Number(btn.dataset.id));
+        const deleted = await request(`/api/words/${btn.dataset.id}`, "DELETE");
         loadVersion += 1;
         renderWords(WORDS.filter(word => word.id !== Number(btn.dataset.id)));
-        notify("Słowo zostało usunięte.");
+        trashVersion += 1;
+        if (trashLoaded) { trashWords = [{...word, ...deleted}, ...trashWords.filter(item => item.id !== word.id)]; renderTrash(); }
+        notify("Słowo przeniesiono do kosza na 7 dni.", "ok", {label: "Cofnij", onClick: () => restoreVocabularyWord(word.id)});
       } catch (error) {
         notify(error.message, "error");
       } finally { btn.disabled = false; if (btn.isConnected) btn.focus(); else inlineForeign.focus(); }
@@ -116,6 +129,7 @@ function mergeWords(words) {
   // A successful write takes precedence over an earlier list refresh.
   loadVersion += 1;
   document.getElementById("word-search").value = "";
+  document.getElementById("word-tag-filter").value = "";
   const byId = new Map(WORDS.map(word => [word.id, word]));
   words.forEach(word => byId.set(word.id, { ...byId.get(word.id), ...word }));
   renderWords([...byId.values()]);
@@ -278,6 +292,7 @@ const inputForeign = document.getElementById("w-foreign");
 const inputPolish = document.getElementById("w-polish");
 const translationAlternatives = document.getElementById("w-translation-alternatives");
 const wordAlternatives = document.getElementById("w-word-alternatives");
+const exampleInput = document.getElementById("w-example"), exampleTranslation = document.getElementById("w-example-translation"), tagsInput = document.getElementById("w-tags");
 let editorOpener = null;
 
 function openEditor(word = null) {
@@ -290,6 +305,10 @@ function openEditor(word = null) {
   inputPolish.value = word?.translation_pl || "";
   translationAlternatives.value = (word?.translation_alternatives || []).join("\n");
   wordAlternatives.value = (word?.word_alternatives || []).join("\n");
+  exampleInput.value = word?.example_sentence || "";
+  exampleTranslation.value = word?.example_translation || "";
+  tagsInput.value = (word?.tags || []).join(", ");
+  document.getElementById("word-context-options").open = !!(word?.example_sentence || word?.tags?.length);
   document.getElementById("word-options").open = !!(word?.translation_alternatives?.length || word?.word_alternatives?.length);
   document.getElementById("w-save-next").hidden = !!word;
   msg.textContent = "";
@@ -353,8 +372,13 @@ async function saveWord(keepOpen = false) {
   const payload = {
     word, translation_pl: translation,
     translation_alternatives: variants(translationAlternatives), word_alternatives: variants(wordAlternatives),
+    example_sentence: exampleInput.value.trim(), example_translation: exampleTranslation.value.trim(),
+    tags: tagsInput.value.split(",").map(value => value.trim()).filter(Boolean),
   };
-  const controls = ["w-save", "w-save-next", "w-cancel", "modal-word-close", "w-foreign", "w-polish", "w-translation-alternatives", "w-word-alternatives"].map(id => document.getElementById(id));
+  if (!!payload.example_sentence !== !!payload.example_translation) {
+    msg.className = "msg error"; msg.textContent = "Uzupełnij zdanie i jego tłumaczenie albo pozostaw oba pola puste."; return;
+  }
+  const controls = ["w-save", "w-save-next", "w-cancel", "modal-word-close", "w-foreign", "w-polish", "w-translation-alternatives", "w-word-alternatives", "w-example", "w-example-translation", "w-tags"].map(id => document.getElementById(id));
   savingWord = true;
   controls.forEach(control => { control.disabled = true; });
   document.getElementById("logout").disabled = true;
@@ -386,7 +410,8 @@ async function saveWord(keepOpen = false) {
 const btnStudy = document.getElementById("btn-study");
 if (btnStudy) {
   btnStudy.addEventListener("click", () => {
-    window.location.href = `/study?id=${LANGUAGE_ID}`;
+    const tag = document.getElementById("word-tag-filter").value;
+    window.location.href = `/study?id=${LANGUAGE_ID}` + (tag ? `&tag=${encodeURIComponent(tag)}` : "");
   });
 } else {
   console.warn("[language.js] Brak elementu #btn-study w HTML.");
@@ -447,5 +472,56 @@ async function refreshLanguage() {
 }
 document.getElementById("language-retry").addEventListener("click", refreshLanguage);
 document.getElementById("word-search").addEventListener("input", () => renderWords(WORDS));
+document.getElementById("word-tag-filter").addEventListener("change", () => renderWords(WORDS));
+
+async function restoreVocabularyWord(id) {
+  const result = await request(`/api/words/${id}/restore`, "POST");
+  trashVersion += 1;
+  trashWords = trashWords.filter(word => word.id !== id);
+  if (trashLoaded) renderTrash();
+  mergeWords([result.word]);
+  notify("Słowo i jego powtórki zostały przywrócone.");
+}
+function renderTrash() {
+  document.getElementById("trash-count").textContent = `(${trashWords.length})`;
+  const container = document.getElementById("trash-list"); container.replaceChildren();
+  if (!trashWords.length) { const empty = document.createElement("p"); empty.className = "muted"; empty.textContent = "Kosz jest pusty."; container.append(empty); }
+  for (const word of trashWords) {
+    const row = document.createElement("article"); row.className = "learning-row";
+    const description = document.createElement("div"), title = document.createElement("strong"), expiry = document.createElement("p");
+    title.textContent = `${word.word} → ${word.translation_pl}`;
+    expiry.className = "muted"; expiry.textContent = "Możesz przywrócić do " + new Date(word.expires_at).toLocaleString("pl-PL");
+    description.append(title, expiry);
+    const actions = document.createElement("div"); actions.className = "trash-actions";
+    const restore = document.createElement("button"), remove = document.createElement("button");
+    restore.type = remove.type = "button"; restore.className = "ghost"; remove.className = "ghost small danger";
+    restore.textContent = "Przywróć"; remove.textContent = "Usuń na zawsze";
+    async function act(permanent) {
+      restore.disabled = remove.disabled = true;
+      const status = document.getElementById("trash-status"); status.textContent = "";
+      try {
+        if (permanent) {
+          if (!await confirmAction({title: "Usunąć słowo na zawsze?", message: "Usuniesz wpis i jego powtórki. Przywrócenie nie będzie już możliwe. Historia quizów pozostanie.", label: "Usuń na zawsze"})) return;
+          await request(`/api/words/${word.id}/permanent`, "DELETE");
+          trashVersion += 1; trashWords = trashWords.filter(item => item.id !== word.id); renderTrash(); notify("Słowo trwale usunięte.");
+        } else await restoreVocabularyWord(word.id);
+      } catch (error) { status.className = "msg error"; status.textContent = error.message; }
+      finally { restore.disabled = remove.disabled = false; if (row.isConnected) restore.focus(); else document.querySelector("#word-trash > summary").focus(); }
+    }
+    restore.addEventListener("click", () => act(false)); remove.addEventListener("click", () => act(true));
+    actions.append(restore, remove); row.append(description, actions); container.append(row);
+  }
+}
+async function loadTrash() {
+  const current = ++trashVersion, status = document.getElementById("trash-status");
+  status.className = "msg"; status.textContent = "Wczytywanie kosza…";
+  try {
+    const result = await request(`/api/user/languages/${LANGUAGE_ID}/trash`);
+    if (current !== trashVersion) return;
+    trashWords = result.words; trashLoaded = true; renderTrash(); status.textContent = "";
+  } catch (error) { if (current === trashVersion) { status.className = "msg error"; status.textContent = error.message; } }
+}
+document.querySelector("#word-trash > summary").addEventListener("click", () => { if (!document.getElementById("word-trash").open) void loadTrash(); });
+document.getElementById("trash-refresh").addEventListener("click", loadTrash);
 refreshLanguage();
 loadDictionaryConfiguration();

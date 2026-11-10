@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 import re
+from .grading import clean_text, normalize_answer
 
 PASSWORD_RE = re.compile(
     r"^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{6,}$"
@@ -55,6 +56,8 @@ class UserOut(BaseModel):
 
 PositiveId = Annotated[int, Field(strict=True, gt=0)]
 WordText = Annotated[str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=128)]
+ExampleText = Annotated[str, StringConstraints(strict=True, strip_whitespace=True, max_length=500)]
+TagText = Annotated[str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=32, pattern=r"^[^\r\n,]+$")]
 
 
 class AddLanguageRequest(APIRequest):
@@ -66,9 +69,28 @@ class AddWordRequest(APIRequest):
     translation_pl: WordText
     translation_alternatives: list[WordText] = Field(default_factory=list, max_length=10)
     word_alternatives: list[WordText] = Field(default_factory=list, max_length=10)
+    example_sentence: ExampleText = ""
+    example_translation: ExampleText = ""
+    tags: list[TagText] = Field(default_factory=list, max_length=10)
     # Accepted for old clients, but ignored: only server-confirmed results can
     # mark new vocabulary as verified. A missing result never prevents saving.
     is_valid: bool = Field(default=False, strict=True)
+
+    @field_validator("tags")
+    @classmethod
+    def unique_tags(cls, values):
+        result, seen = [], set()
+        for value in values:
+            key = normalize_answer(value)
+            if key not in seen:
+                result.append(clean_text(value)); seen.add(key)
+        return result
+
+    @model_validator(mode="after")
+    def complete_example(self):
+        if bool(self.example_sentence) != bool(self.example_translation):
+            raise ValueError("Uzupełnij zdanie i jego polskie tłumaczenie albo pozostaw oba pola puste.")
+        return self
 
 
 class QuickWordRequest(APIRequest):
@@ -86,6 +108,7 @@ class StudyStartRequest(APIRequest):
     count: int = Field(default=10, strict=True, ge=1, le=50)
     request_id: UUID | None = None
     source: Literal["all", "due"] = "all"
+    tag: TagText | None = None
 
     @model_validator(mode="after")
     def review_direction(self):

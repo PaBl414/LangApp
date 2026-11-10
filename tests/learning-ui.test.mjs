@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { continueTarget, filterVocabulary, matchingRound, shuffled, wordCount } from "../frontend/js/learning-ui.js";
+import { continueTarget, filterVocabulary, matchingRound, shuffled, wordCount, vocabularyTags } from "../frontend/js/learning-ui.js";
 
 const words = [{id:1,word:"hello",translation_pl:"cześć",translation_alternatives:["witaj"]},
   {id:2,word:"house",translation_pl:"dom"}, {id:3,word:"cat",translation_pl:"kot"}, {id:4,word:"dog",translation_pl:"pies"}];
@@ -62,4 +62,13 @@ test("vocabulary search includes aliases and NFC while preserving source order",
   assert.deepEqual(filterVocabulary(words,"missing"),[]);
   assert.equal(filterVocabulary(words," "),words);
   assert.equal(filterVocabulary([{word:"cafe\u0301",translation_pl:"kawiarnia"}],"café").length,1);
+});
+
+test("tag and context search intersect, normalize and keep source order", () => {
+  const tagged=[{...words[0],tags:["Ważne","Do pracy"],example_sentence:"Hello, my friend.",example_translation:"Cześć, przyjacielu."},{...words[1],tags:["ważne"]},words[2]];
+  assert.deepEqual(vocabularyTags(tagged),["Do pracy","Ważne"]);
+  assert.deepEqual(filterVocabulary(tagged,"przyjacielu","WAŻNE").map(w=>w.id),[1]);
+  assert.deepEqual(filterVocabulary(tagged,"","ważne").map(w=>w.id),[1,2]);
+  assert.deepEqual(filterVocabulary(tagged,"house","Do pracy"),[]);
+  assert.deepEqual(filterVocabulary(tagged,"Do pracy").map(w=>w.id),[1]);
 });

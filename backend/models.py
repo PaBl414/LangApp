@@ -78,8 +78,13 @@ class UserWord(Base):
     translation_pl: Mapped[str] = mapped_column(String(128), nullable=False)  # tłumaczenie polskie
     translation_alternatives: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]", nullable=False)
     word_alternatives: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]", nullable=False)
+    example_sentence: Mapped[str] = mapped_column(String(500), default="", server_default="", nullable=False)
+    example_translation: Mapped[str] = mapped_column(String(500), default="", server_default="", nullable=False)
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]", nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     is_valid: Mapped[bool] = mapped_column(default=True)                    # czy przeszło walidację API
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    __table_args__ = (Index("ix_user_words_trash", "user_id", "language_id", "deleted_at"),)
 class StudySession(Base):
     """Sesja nauki — jedno podejście użytkownika do quizu."""
     __tablename__ = "study_sessions"
@@ -98,6 +103,7 @@ class StudySession(Base):
     start_request_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     requested_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source: Mapped[str] = mapped_column(String(8), default="all", server_default="all", nullable=False)
+    tag: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     __table_args__ = (
         Index("uq_study_start_request", "user_id", "start_request_id", unique=True),
@@ -114,6 +120,8 @@ class StudyAnswer(Base):
     prompt: Mapped[str] = mapped_column(String(128), nullable=False)       # co pokazano
     expected: Mapped[str] = mapped_column(String(128), nullable=False)     # poprawna odpowiedź
     accepted_answers: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]", nullable=False)
+    example_sentence: Mapped[str] = mapped_column(String(500), default="", server_default="", nullable=False)
+    example_translation: Mapped[str] = mapped_column(String(500), default="", server_default="", nullable=False)
     given: Mapped[str] = mapped_column(String(128), nullable=False)        # co wpisał/kliknął użytkownik
     is_correct: Mapped[bool] = mapped_column(default=False)
     direction: Mapped[str] = mapped_column(String(16), nullable=False)     # "lang_to_pl" | "pl_to_lang"
