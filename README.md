@@ -16,13 +16,13 @@ LangApp is a small Polish-language vocabulary learning app. It provides account 
 - Editable vocabulary with explicit accepted alternatives in both translation directions.
 - A dashboard with previous results, practiced-word counts, accuracy, daily streaks and difficult vocabulary.
 - Scheduled daily reviews based on completed answers, tracked separately for both translation directions.
-- Optional word suggestions and English dictionary lookup through third-party APIs.
+- Optional multilingual dictionary checks with a browser toggle and a server-wide off switch.
 
 ## Requirements
 
 - Python 3.11 or newer (Python 3.12 is also suitable).
 - `pip` and `venv`.
-- Internet access for optional external dictionary lookups. [Datamuse announces mandatory keys from February 1, 2027](https://www.datamuse.com/api/); key integration is not implemented yet.
+- Internet access for optional Wiktionary / Free Dictionary API lookups. No API key is required; saving and studying words do not require these services.
 
 ## Run locally
 
@@ -103,7 +103,7 @@ The app serves its frontend and API from the same origin. Main route groups:
 - `PUT /api/study/sessions/{id}/draft`, `POST /api/study/submit`
 - `PUT /api/words/{id}` for editing vocabulary and accepted alternatives
 - `POST /api/user/languages/{language_id}/words/import` for atomic quick entry (1–100 pairs)
-- `GET /api/dictionary/check`
+- `GET /api/dictionary/config`, `GET /api/dictionary/check`
 
 Use `/docs` while the local server is running for the complete generated OpenAPI schema and request models.
 
@@ -120,8 +120,8 @@ New words appear at the end of the list, immediately above this row.
   foreign-word field. A failed save preserves both fields for correction or retry.
 - Empty fields are rejected. Identical pairs are skipped; a different primary
   translation for an existing word is a conflict and can be changed with **Edytuj**.
-- This row uses the same atomic, duplicate-safe endpoint as batch entry. Words
-  are stored as unverified without waiting for a third-party dictionary.
+- This row uses the same atomic, duplicate-safe endpoint as batch entry. Saving
+  never waits for a third-party dictionary. Optional checks run while typing.
 - **Więcej opcji** opens the editor with dictionary lookup and optional accepted
   alternatives. The header's **+ Dodaj słowo** button focuses the always-visible row.
 
@@ -164,10 +164,9 @@ literal text and do not create accepted alternatives.
   confirmation. Explicit logout asks before discarding the list and clears it
   only after successful logout. Quick-entry text is not stored in browser storage;
   it does not survive closing or reloading the page after confirming the discard.
-- Quick entry adds words as **unverified** without contacting a third-party
-  dictionary or claiming to validate translations. This keeps large pastes fast
-  and available when external services are unavailable. The warning badge means
-  “not verified”, not “incorrect”; unverified words are available in quizzes.
+- Batch entry does not request external lookups. Existing server-cached positive
+  checks may mark new entries as verified; otherwise they remain unverified.
+  Unverified words have no warning badges and are available in quizzes.
 - **Więcej opcji** retains the single-word dictionary check and optional
   accepted alternatives, collapsed until needed. **Zapisz i dodaj kolejne** keeps
   the editor open. Enter in the foreign-word field moves to the translation;
@@ -178,6 +177,102 @@ The batch endpoint accepts `{"words": [{"word": "hello", "translation_pl": "cze�
 and returns `added`, `skipped` and the resulting unique `words`. It rejects unknown
 fields, including client-provided verification flags. It requires authentication
 and a language belonging to that account. This feature needs no database upgrade.
+
+## Optional dictionary checking
+
+Use **Sprawdzaj słowa w słowniku** on the language page to turn checks on or off.
+The setting is shared across language pages in the same browser and origin,
+not stored on the user account. With browser storage blocked it still works
+for the current page. Turning it off clears pending timers and advisory text;
+already-started responses are ignored and no new lookups are sent. Other open
+tabs follow changes through the browser's storage event.
+
+Checks run after a 700 ms typing pause in the always-visible foreign-word field
+and in the editor. Saving never starts or waits for a lookup, never asks for a
+dictionary confirmation, and never blocks because a word was not found.
+Unverified existing words no longer receive warning badges or error borders.
+Input validation (required fields, length and duplicates) stays enabled.
+
+### Autocomplete
+
+From two characters, the same fields also show up to five verified word
+completions. For example, type `hel` in English and choose `hello`. Click a
+proposal, or use **Arrow Down / Arrow Up** and **Enter**. Selecting a proposal
+fills the foreign-word field without saving the form or changing the Polish
+translation. A following Enter moves to the translation as usual. Escape closes
+the list; in the editor it dismisses an open suggestion list before closing the
+dialog. Tab moves on without selecting. Text is never replaced automatically.
+
+Candidates come from [MediaWiki prefix search](https://www.mediawiki.org/wiki/API:Prefixsearch)
+in the selected language's Wiktionary edition, with English-edition fallback.
+The strict profile preserves accents, and the server additionally filters titles
+by the actual prefix, namespace, length and selected-language entry. Every
+proposal must pass the same language-section check used for exact lookup before
+being offered. Search results alone never mark a prefix as an existing word.
+
+`GET /api/dictionary/check?lang=en&word=hel&suggest=true` runs exact checking and
+completion concurrently, returning verified `suggestions` and a separate
+`suggestions_status`. Without `suggest=true`, the existing exact-check behavior
+is unchanged. Each completion lookup checks at most eight candidates, shares
+in-flight work, has an eight-second deadline and reuses positive lexical checks.
+A separate bounded cache holds up to 512 prefixes: positive completion lists for
+60 seconds, other results for 15 seconds. Suggestions may be absent if there is
+no matching entry, incomplete dictionary coverage or a service outage; saving
+still works. The existing checkbox and server off switch disable autocomplete
+as well as exact checking. Stale responses after further typing, leaving a field,
+selecting a proposal or switching off cannot restore old proposals.
+
+The lookup implementation uses:
+
+- [Free Dictionary API](https://dictionaryapi.dev/) as the first English source.
+- English Wiktionary's [language sections](https://en.wiktionary.org/wiki/Wiktionary:Entry_layout)
+  for multilingual lookup and English fallback. It requests only section metadata
+  through the [MediaWiki parsing API](https://www.mediawiki.org/wiki/API:Parsing_wikitext/TOCData),
+  and confirms the selected language's level-two heading, not merely the existence
+  of a page. Mappings cover 49 catalog codes. Cantonese (`yue`) returns
+  `unsupported`, since a generic Chinese section does not confirm Cantonese.
+
+Datamuse autocomplete is no longer used to decide whether a word exists.
+Lookups preserve Unicode NFC, accents, hyphens and whole phrases, and try only
+the supplied spelling, lowercase and initial-capital spelling. They do not
+validate a phrase by finding its component words or accept fuzzy suggestions
+as evidence. Dictionaries have incomplete coverage of inflections, names and
+phrases; **not found is not a declaration that the word is incorrect**. The
+checker does not validate the Polish translation or replace entered text without
+the user's explicit selection.
+
+`GET /api/dictionary/check?lang=de&word=Hund` returns a `status` of `found`,
+`not_found`, `unavailable`, `unsupported` or `disabled`, plus the legacy `exists`
+boolean, `source`, `matched_word`, `lang`, `word` and `suggestions` (empty unless
+completion was requested).
+HTTP 429/5xx, timeouts, malformed upstream responses and unexpected provider
+errors are treated as temporary unavailability, not negative lexical evidence.
+The UI presents each status as a neutral, non-blocking hint near the input.
+
+The server bounds a lookup to 8 seconds in total (3 seconds per HTTP request),
+with up to 8 concurrent outbound lookup operations per process. Identical
+in-flight lookups share their work. An in-memory cache holds at most 1,024
+entries per process: positive results for 6 hours, missing entries for 5 minutes
+and temporary unavailability for 15 seconds. Cache entries disappear on restart.
+Saving can reuse a positive result already in that worker's cache; it never
+contacts a provider. The legacy `is_valid` request field remains accepted as a
+strict boolean for old clients but is ignored. Existing verified flags are
+preserved when editing an unchanged foreign word; flags do not grade quizzes.
+
+To disable external dictionary checking for the entire app, set this environment
+variable before starting the server:
+
+```powershell
+$env:LANGAPP_DICTIONARY_ENABLED = "0"
+```
+
+With this setting the UI toggle is disabled, `/check` returns `disabled`, and
+dictionary checks make no outbound requests. Remove the variable or set it to
+`1` and restart to enable checks again. `LANGAPP_DICTIONARY_USER_AGENT` can set a
+deployment-specific descriptive User-Agent with contact information, following
+the [Wikimedia User-Agent policy](https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy).
+The default identifies LangApp and links to its repository. No database migration
+or additional Python dependency is required.
 
 ## Quiz recovery and answer grading
 
@@ -287,8 +382,9 @@ refreshes also discard stale responses to prevent deleted data reappearing.
 GitHub Actions runs on pushes and pull requests with read-only repository
 permissions. It installs dependencies, runs `pip check`, compiles Python files
 and runs isolated regression tests on **Python 3.11 and 3.12**. A separate
-**Node.js 24** job checks JavaScript syntax, shared API error handling and
-vocabulary paste parsing. API regressions also cover atomic imports, retry safety,
+**Node.js 24** job checks JavaScript syntax, shared API error handling,
+dictionary toggle/response handling and vocabulary paste parsing. API regressions
+also cover dictionary fallbacks/statuses/cache, atomic imports, retry safety,
 concurrent writers, ownership and preserving review state when skipping duplicates.
 Action versions are pinned by commit SHA. CI results become available after
 the workflow is pushed to GitHub; configuring it locally does not run remote CI.
@@ -320,13 +416,20 @@ For an HTTPS deployment, set `LANGAPP_COOKIE_SECURE=1` so authentication cookies
 
 The database contains account identifiers, password hashes, session tokens, IP/fingerprint values and learning data. Keep it out of source control and back it up securely. New passwords use Argon2; existing bcrypt hashes are verified and upgraded to Argon2 after a successful login. Password hashes do not make the database safe to publish.
 
-The dictionary route sends the queried word to third-party services (Free Dictionary API and Datamuse). Their availability and data practices are outside this project’s control.
+When checking is enabled, the dictionary route sends the queried foreign word
+(not the Polish translation) to Free Dictionary API for English and to Wikimedia's
+English Wiktionary when needed. Autocomplete also sends the entered prefix to
+the selected language's Wiktionary edition and checks candidate entries in English
+Wiktionary. Their availability and data practices are outside
+this project's control. Disable checks in the browser or server configuration to
+stop new external lookups. Server cache entries are shared lexical results, not
+account data; they are held in memory and expire as described above.
 
 ## Development notes
 
 - Seed or update the language catalog with `python -m backend.seed_languages`.
 - Database schema changes belong in Alembic revisions under `migrations/`.
 - Run regressions with `python -m unittest discover -s tests -v`. Tests use temporary SQLite databases and in-process ASGI requests, without opening a network port or changing the local application database. No additional test dependencies are required.
-- API request models reject invalid types, oversized text, duplicate quiz answers and unknown fields with HTTP 422. Answers for words outside the selected quiz are rejected with HTTP 400. Word validation status is currently client-reported; it defaults to unverified and must be a JSON boolean, not a string.
+- API request models reject invalid types, oversized text, duplicate quiz answers and unknown fields with HTTP 422. Answers for words outside the selected quiz are rejected with HTTP 400. New word verification flags come only from positive server-cached dictionary results; absence of a result never prevents saving or learning.
 - CI configuration is in `.github/workflows/checks.yml`.
 - No license is included. Add a license only after deciding which reuse terms you want to grant.

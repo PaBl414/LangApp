@@ -319,6 +319,16 @@ button.suggestion {
 button.suggestion:hover { background: var(--accent); color: white; }
 
 /* Quick vocabulary entry and paste preview */
+.dictionary-settings { padding: 12px 0; }
+.dictionary-toggle { display: flex; flex-direction: row; align-items: center; gap: 10px; color: var(--text); cursor: pointer; margin-bottom: 6px; }
+.dictionary-toggle input { width: 18px; height: 18px; padding: 0; margin: 0; accent-color: var(--accent); }
+.dictionary-settings small { display: block; line-height: 1.5; }
+.dictionary-feedback { color: var(--muted); line-height: 1.5; }
+.dictionary-feedback:empty { display: none; }
+.word-completions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.word-completions[hidden] { display: none; }
+.word-completions button { background: rgba(99,102,241,.15); color: var(--text); border: 1px solid rgba(99,102,241,.5); padding: 8px 12px; border-radius: 8px; cursor: pointer; font: inherit; overflow-wrap: anywhere; max-width: 100%; }
+.word-completions button:hover, .word-completions button[aria-selected="true"] { background: var(--accent); color: white; }
 .inline-add { margin: 12px 0 24px; padding: 18px; border: 1px dashed rgba(99,102,241,.6); border-radius: var(--radius); background: rgba(99,102,241,.06); }
 .inline-add h2 { font-size: 16px; margin: 0 0 14px; }
 .inline-word-form { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr) auto; gap: 12px; align-items: end; }

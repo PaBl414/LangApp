@@ -28,6 +28,16 @@
     <p id="language-msg" class="msg" role="status" aria-live="polite">Wczytywanie słów…</p>
     <button id="language-retry" class="ghost" type="button" hidden>Wczytaj ponownie</button>
 
+    <div class="dictionary-settings">
+      <label class="dictionary-toggle" for="dictionary-enabled">
+        <input id="dictionary-enabled" type="checkbox" disabled aria-describedby="dictionary-help dictionary-config-msg" />
+        Sprawdzaj słowa w słowniku
+      </label>
+      <small id="dictionary-help" class="muted">Od dwóch liter pokażemy propozycje. Wybierz kliknięciem lub strzałkami i Enterem. Brak wpisu nie blokuje dodawania.</small>
+      <p id="dictionary-config-msg" class="msg" role="status" aria-live="polite"></p>
+      <button id="dictionary-retry" class="ghost small" type="button" hidden>Ponów wczytywanie ustawienia</button>
+    </div>
+
     <h2 class="section-title">
       Moje słowa (<span id="word-count">0</span>)
     </h2>
@@ -41,7 +51,7 @@
       <form id="inline-word-form" class="inline-word-form">
         <label for="inline-foreign">Słowo w języku obcym
           <input id="inline-foreign" name="word" type="text" placeholder="np. hello" maxlength="128" required
-            autocomplete="off" autocapitalize="off" spellcheck="false" disabled />
+            autocomplete="off" autocapitalize="off" spellcheck="false" disabled aria-describedby="inline-dictionary" />
         </label>
         <span class="inline-arrow" aria-hidden="true">→</span>
         <label for="inline-polish">Tłumaczenie polskie
@@ -50,9 +60,11 @@
         </label>
         <button id="inline-save" class="primary" type="submit" disabled>Dodaj słowo</button>
       </form>
+      <div id="inline-suggestions" class="word-completions" role="listbox" aria-label="Propozycje słowa w języku obcym" hidden></div>
+      <p id="inline-dictionary" class="msg dictionary-feedback" role="status" aria-live="polite"></p>
       <p id="inline-msg" class="msg" role="status" aria-live="polite"></p>
       <div class="inline-footer">
-        <small class="muted">Enter: przejdź do tłumaczenia i dodaj. Słowa zapisujemy bez weryfikacji słownikowej.</small>
+        <small class="muted">Enter: przejdź do tłumaczenia i dodaj. Po zapisie możesz od razu wpisać kolejne słowo.</small>
         <button id="btn-advanced-word" class="ghost small" type="button" disabled>Więcej opcji</button>
       </div>
     </section>
@@ -99,10 +111,11 @@
         <label class="field">
           Słowo w języku obcym
           <input type="text" id="w-foreign" placeholder="np. hello" maxlength="128"
-                 autocomplete="off" autocapitalize="off" spellcheck="false" />
+                 autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="w-dictionary" />
         </label>
 
-        <div id="w-suggest" class="suggestions hidden"></div>
+        <div id="w-suggestions" class="word-completions" role="listbox" aria-label="Propozycje słowa w języku obcym" hidden></div>
+        <p id="w-dictionary" class="msg dictionary-feedback" role="status" aria-live="polite"></p>
 
         <label class="field">
           Tłumaczenie polskie

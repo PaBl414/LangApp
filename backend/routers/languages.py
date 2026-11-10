@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
+from ..dictionary_service import dictionary
 from ..models import Language, UserLanguage, User, UserWord, StudySession, StudyAnswer, Progress, WordReview
 from ..schemas import AddLanguageRequest, AddWordRequest, ImportWordsRequest
 from ..grading import accepted_variants, clean_text, normalize_answer
@@ -35,6 +36,11 @@ async def duplicate_word(db: AsyncSession, user_id: int, language_id: int, prima
     ))).all()
     key = normalize_answer(primary)
     return any(row.id != exclude_id and normalize_answer(row.word) == key for row in rows)
+
+
+async def cached_confirmation(db: AsyncSession, language_id: int, word: str) -> bool:
+    language = await db.get(Language, language_id)
+    return bool(language and dictionary.confirmed(language.code, word))
 
 
 @router.get("/languages")
@@ -200,11 +206,11 @@ async def add_word(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Dodaj słowo. Body: {"word": "...", "translation_pl": "...", "is_valid": true/false}
+    Dodaj słowo, niezależnie od dostępności zewnętrznych słowników.
+    Potwierdzenie może pochodzić wyłącznie z gotowego wyniku w cache serwera.
     """
     word = clean_text(payload.word)
     translation = clean_text(payload.translation_pl)
-    is_valid = payload.is_valid
 
     await lock_vocabulary(db, user.id, language_id)
 
@@ -218,7 +224,7 @@ async def add_word(
         translation_pl=translation,
         translation_alternatives=accepted_variants(translation, payload.translation_alternatives)[1:],
         word_alternatives=accepted_variants(word, payload.word_alternatives)[1:],
-        is_valid=is_valid,
+        is_valid=await cached_confirmation(db, language_id, word),
     )
     db.add(w)
     await db.commit()
@@ -238,11 +244,12 @@ async def import_words(
 ):
     """Import up to 100 pairs atomically; identical pairs are safe to retry.
 
-    Quick entry never claims external dictionary verification. Existing aliases,
+    Quick entry never waits for external dictionary verification. Existing aliases,
     spelling, verification flags and review state are preserved on duplicates.
     Conflicting translations reject the entire batch without overwriting data.
     """
     await lock_vocabulary(db, user.id, language_id)
+    language = await db.get(Language, language_id)
     existing = (await db.execute(select(UserWord).where(
         UserWord.user_id == user.id, UserWord.language_id == language_id,
     ))).scalars().all()
@@ -268,7 +275,7 @@ async def import_words(
         item = UserWord(
             user_id=user.id, language_id=language_id, word=word,
             translation_pl=translation, translation_alternatives=[],
-            word_alternatives=[], is_valid=False,
+            word_alternatives=[], is_valid=bool(language and dictionary.confirmed(language.code, word)),
         )
         by_word[key] = [item]
         selected[key] = item
@@ -306,11 +313,12 @@ async def update_word(
     if await duplicate_word(db, user.id, word.language_id, primary, exclude_id=word.id):
         raise HTTPException(409, "To słowo już istnieje w tym języku.")
     previous_signature = word_signature(word)
+    verified = word.is_valid if word.word == primary else False
     word.word = primary
     word.translation_pl = clean_text(payload.translation_pl)
     word.translation_alternatives = accepted_variants(word.translation_pl, payload.translation_alternatives)[1:]
     word.word_alternatives = accepted_variants(word.word, payload.word_alternatives)[1:]
-    word.is_valid = payload.is_valid
+    word.is_valid = verified or await cached_confirmation(db, word.language_id, primary)
     if word_signature(word) != previous_signature:
         await db.execute(delete(WordReview).where(
             WordReview.user_id == user.id, WordReview.word_id == word.id,

@@ -1,9 +1,10 @@
 import { request } from "./api-client.js";
 import { previewWords, cleanWordText } from "./quick-words.js";
+import { createWordChecker, readDictionaryPreference, saveDictionaryPreference, DICTIONARY_PREFERENCE } from "./dictionary.js";
 
 /**
  * language.js — widok pojedynczego języka.
- * Lista słów, dodawanie z walidacją API (Datamuse + Free Dictionary), usuwanie.
+ * Lista słów, opcjonalne podpowiedzi słownikowe, dodawanie i usuwanie.
  * Przycisk „Ucz się" → /study?id=N
  */
 
@@ -53,6 +54,7 @@ async function loadAll() {
   quickInput.disabled = false;
   document.getElementById("btn-advanced-word").disabled = false;
   refreshQuickPreview();
+  inlineChecker.schedule();
 }
 
 function renderWords(words) {
@@ -69,7 +71,7 @@ function renderWords(words) {
   el.innerHTML = "";
   words.forEach(w => {
     const div = document.createElement("div");
-    div.className = "word-row" + (w.is_valid ? "" : " warning");
+    div.className = "word-row";
     div.innerHTML = `
       <div class="word-cell">
         <b>${escapeHtml(w.word)}</b>
@@ -79,7 +81,6 @@ function renderWords(words) {
         ${(w.word_alternatives || []).length ? `<small class="muted"> (inne formy: ${w.word_alternatives.map(escapeHtml).join("; ")})</small>` : ""}
       </div>
       <div class="word-actions">
-        ${w.is_valid ? "" : `<span class="badge-warn" title="Słowo niezweryfikowane w zewnętrznym słowniku" aria-label="Niezweryfikowane w słowniku">⚠</span>`}
         <button class="ghost small" type="button" data-edit="${w.id}">Edytuj</button>
         <button class="ghost small danger" type="button" data-id="${w.id}">Usuń</button>
       </div>
@@ -162,6 +163,7 @@ inlineForm.addEventListener("submit", async event => {
     mergeWords(result.words);
     inlineForeign.value = "";
     inlinePolish.value = "";
+    inlineChecker.invalidate();
     inlineMsg.className = "msg ok";
     inlineMsg.textContent = result.added ? `Dodano „${word}”. Możesz wpisać kolejne słowo.` : "Ta para jest już na liście. Możesz dodać kolejne słowo.";
   } catch (error) {
@@ -266,18 +268,15 @@ function escapeHtml(s) {
 // === 5. Modal: dodawanie słowa ===
 const modal = document.getElementById("modal-word");
 const msg = document.getElementById("w-msg");
-const suggestionsEl = document.getElementById("w-suggest");
 const inputForeign = document.getElementById("w-foreign");
 const inputPolish = document.getElementById("w-polish");
 const translationAlternatives = document.getElementById("w-translation-alternatives");
 const wordAlternatives = document.getElementById("w-word-alternatives");
-let editorVersion = 0;
 let editorOpener = null;
 
 function openEditor(word = null) {
   if (savingWord || savingQuick || savingInline || !LANG) return;
-  clearTimeout(checkTimer);
-  editorVersion += 1;
+  modalChecker.invalidate();
   if (modal.classList.contains("hidden")) editorOpener = document.activeElement;
   editingWord = word;
   document.getElementById("word-modal-title").textContent = word ? "Edytuj słowo" : "Dodaj słowo";
@@ -289,10 +288,9 @@ function openEditor(word = null) {
   document.getElementById("w-save-next").hidden = !!word;
   msg.textContent = "";
   msg.className = "msg";
-  suggestionsEl.classList.add("hidden");
-  suggestionsEl.innerHTML = "";
   modal.classList.remove("hidden");
   inputForeign.focus();
+  modalChecker.schedule();
 }
 document.getElementById("btn-add-word").addEventListener("click", () => {
   inlineForm.scrollIntoView({ block: "center" });
@@ -302,8 +300,7 @@ document.getElementById("btn-advanced-word").addEventListener("click", () => ope
 
 function closeModal() {
   if (savingWord) return;
-  editorVersion += 1;
-  clearTimeout(checkTimer);
+  modalChecker.invalidate();
   modal.classList.add("hidden");
   if (editorOpener?.isConnected) editorOpener.focus();
   else quickInput.focus();
@@ -330,42 +327,6 @@ inputPolish.addEventListener("keydown", event => {
   }
 });
 
-// Debounce walidacji przy wpisywaniu
-let checkTimer = null;
-inputForeign.addEventListener("input", () => {
-  const v = inputForeign.value.trim();
-  suggestionsEl.classList.add("hidden");
-  suggestionsEl.innerHTML = "";
-  if (checkTimer) clearTimeout(checkTimer);
-  if (v.length < 2) return;
-  checkTimer = setTimeout(() => checkWord(v), 600);
-});
-
-async function checkWord(word) {
-  const version = editorVersion;
-  try {
-    const data = await request(
-      `/api/dictionary/check?lang=${encodeURIComponent(LANG.code)}&word=${encodeURIComponent(word)}`
-    );
-    if (version !== editorVersion || modal.classList.contains("hidden") || inputForeign.value.trim() !== word) return;
-    if (!data.exists && data.suggestions?.length) {
-      suggestionsEl.innerHTML = `<span class="muted">Czy chodziło Ci o:</span> ` +
-        data.suggestions.map(s =>
-          `<button class="suggestion" type="button" data-word="${escapeHtml(s)}">${escapeHtml(s)}</button>`
-        ).join(" ");
-      suggestionsEl.classList.remove("hidden");
-      suggestionsEl.querySelectorAll("button.suggestion").forEach(btn => {
-        btn.addEventListener("click", () => {
-          inputForeign.value = btn.dataset.word;
-          suggestionsEl.classList.add("hidden");
-        });
-      });
-    }
-  } catch (e) {
-    console.warn("checkWord error:", e);
-  }
-}
-
 // === 6. Zapis słowa ===
 document.getElementById("w-save").addEventListener("click", () => saveWord(false));
 document.getElementById("w-save-next").addEventListener("click", () => saveWord(true));
@@ -384,7 +345,7 @@ async function saveWord(keepOpen = false) {
   const variants = input => input.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
   const edited = editingWord;
   const payload = {
-    word, translation_pl: translation, is_valid: edited?.word === word ? edited.is_valid : false,
+    word, translation_pl: translation,
     translation_alternatives: variants(translationAlternatives), word_alternatives: variants(wordAlternatives),
   };
   const controls = ["w-save", "w-save-next", "w-cancel", "modal-word-close", "w-foreign", "w-polish", "w-translation-alternatives", "w-word-alternatives"].map(id => document.getElementById(id));
@@ -394,22 +355,6 @@ async function saveWord(keepOpen = false) {
   refreshQuickPreview();
   msg.textContent = "Zapisywanie…";
   try {
-    if (edited?.word !== word) {
-      try {
-        const check = await request(`/api/dictionary/check?lang=${encodeURIComponent(LANG.code)}&word=${encodeURIComponent(word)}`);
-        payload.is_valid = !!check.exists;
-        if (!payload.is_valid && !confirm(`Słowo „${word}" nie zostało znalezione. Zapisać jako niezweryfikowane?`)) {
-          msg.textContent = "Zapis anulowany. Wpisane dane zachowano.";
-          return;
-        }
-      } catch {
-        payload.is_valid = false;
-        if (!confirm("Nie udało się zweryfikować słowa. Zapisać jako niezweryfikowane?")) {
-          msg.textContent = "Zapis anulowany. Wpisane dane zachowano.";
-          return;
-        }
-      }
-    }
     const result = await request(edited ? `/api/words/${edited.id}` : `/api/user/languages/${LANGUAGE_ID}/words`, edited ? "PUT" : "POST", payload);
     mergeWords([result.word]);
     savingWord = false;
@@ -441,6 +386,47 @@ if (btnStudy) {
 }
 
 // === 8. Start ===
+let dictionaryLanguages = new Set();
+const dictionaryToggle = document.getElementById("dictionary-enabled");
+const inlineChecker = createWordChecker({ input: inlineForeign, feedback: document.getElementById("inline-dictionary"),
+  suggestions: document.getElementById("inline-suggestions"),
+  getLanguage: () => LANG?.code, isSupported: lang => dictionaryLanguages.has(lang) });
+const modalChecker = createWordChecker({ input: inputForeign, feedback: document.getElementById("w-dictionary"),
+  suggestions: document.getElementById("w-suggestions"),
+  getLanguage: () => modal.classList.contains("hidden") ? null : LANG?.code, isSupported: lang => dictionaryLanguages.has(lang) });
+function applyDictionarySetting() {
+  const enabled = !dictionaryToggle.disabled && dictionaryToggle.checked;
+  inlineChecker.setEnabled(enabled);
+  modalChecker.setEnabled(enabled);
+}
+dictionaryToggle.addEventListener("change", () => {
+  saveDictionaryPreference(dictionaryToggle.checked);
+  applyDictionarySetting();
+});
+window.addEventListener("storage", event => {
+  if (event.key === DICTIONARY_PREFERENCE || event.key === null) {
+    dictionaryToggle.checked = !dictionaryToggle.disabled && readDictionaryPreference();
+    applyDictionarySetting();
+  }
+});
+async function loadDictionaryConfiguration() {
+  const retry = document.getElementById("dictionary-retry");
+  retry.disabled = true;
+  try {
+    const config = await request("/api/dictionary/config");
+    dictionaryLanguages = new Set(config.languages || []);
+    dictionaryToggle.disabled = !config.enabled;
+    dictionaryToggle.checked = !!config.enabled && readDictionaryPreference();
+    document.getElementById("dictionary-config-msg").textContent = config.enabled ? "" : "Sprawdzanie wyłączone w konfiguracji aplikacji.";
+    retry.hidden = true;
+  } catch {
+    dictionaryToggle.disabled = true;
+    dictionaryToggle.checked = false;
+    document.getElementById("dictionary-config-msg").textContent = "Sprawdzanie chwilowo niedostępne. Dodawanie słów działa normalnie.";
+    retry.hidden = false;
+  } finally { retry.disabled = false; applyDictionarySetting(); }
+}
+document.getElementById("dictionary-retry").addEventListener("click", loadDictionaryConfiguration);
 async function refreshLanguage() {
   const retry = document.getElementById("language-retry");
   retry.disabled = true;
@@ -454,3 +440,4 @@ async function refreshLanguage() {
 }
 document.getElementById("language-retry").addEventListener("click", refreshLanguage);
 refreshLanguage();
+loadDictionaryConfiguration();

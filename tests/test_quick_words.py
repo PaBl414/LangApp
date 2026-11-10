@@ -28,7 +28,7 @@ class QuickWordTests(APITestCase):
     async def test_normalization_duplicates_and_lost_response_retry(self):
         await self.prepare()
         pairs = [(" cafe\u0301 ", " kawiarnia "), ("CAFÉ", "KAWIARNIA"), ("house", " dom   rodzinny ")]
-        with patch("backend.routers.dictionary.httpx.AsyncClient", side_effect=AssertionError("Quick entry must not call third-party APIs")):
+        with patch("backend.dictionary_service.httpx.AsyncClient", side_effect=AssertionError("Quick entry must not call third-party APIs")):
             first = await self.send(pairs)
             retry = await self.send(pairs)
         self.assertEqual(first.status_code, 200, first.text)

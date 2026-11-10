@@ -66,7 +66,8 @@ class AddWordRequest(APIRequest):
     translation_pl: WordText
     translation_alternatives: list[WordText] = Field(default_factory=list, max_length=10)
     word_alternatives: list[WordText] = Field(default_factory=list, max_length=10)
-    # This remains a client-reported flag until dictionary verification moves server-side.
+    # Accepted for old clients, but ignored: only server-confirmed results can
+    # mark new vocabulary as verified. A missing result never prevents saving.
     is_valid: bool = Field(default=False, strict=True)
 
 
